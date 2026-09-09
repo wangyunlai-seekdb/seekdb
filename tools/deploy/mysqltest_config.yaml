@@ -2,6 +2,8 @@ version: 2.0
 runtime_configs:
   psmall:
     test-set:
+      - graph_p0.semantics
+      - graph_p0.transaction
       # All top-level mysql_test/t cases.
       - a_trade_notify
       - a_trade_quick
