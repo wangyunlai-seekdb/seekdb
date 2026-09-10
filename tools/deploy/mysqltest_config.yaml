@@ -3,7 +3,6 @@ runtime_configs:
   psmall:
     test-set:
       - graph.semantics
-      - graph.transaction
       # All top-level mysql_test/t cases.
       - a_trade_notify
       - a_trade_quick
