@@ -3,6 +3,11 @@ runtime_configs:
   psmall:
     test-set:
       - graph.semantics
+      - graph.ddl
+      - graph.query
+      - graph.lifecycle
+      - graph.boundary
+      - graph.privilege
       # All top-level mysql_test/t cases.
       - a_trade_notify
       - a_trade_quick
