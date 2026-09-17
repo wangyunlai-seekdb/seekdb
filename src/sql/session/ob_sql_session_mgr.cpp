@@ -173,9 +173,12 @@ ObSQLSessionMgr::~ObSQLSessionMgr()
 
 ObSQLSessionInfo *ObSQLSessionMgr::ValueAlloc::alloc_value()
 {
+  int ret = OB_SUCCESS;
   ObSQLSessionInfo *session = new (std::nothrow) ObSQLSessionInfo();
   int64_t alloc_total_count = 0;
-  if (OB_NOT_NULL(session)) {
+  if (OB_ISNULL(session)) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
     ATOMIC_FAA(&active_count_, 1);
     session->set_valid(true);
     session->set_shadow(true);
