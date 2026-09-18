@@ -6,6 +6,10 @@
 - Keep the `I` prefix for interface classes. For example, use `ICacheMemoryGetter` instead of `ObICacheMemoryGetter`.
 - Do not rename existing types only to remove the `Ob` prefix unless the task explicitly requires it.
 
+## C++ Struct Initialization
+
+- Initialize members of newly added C++ structs at their declarations, using brace-or-equal initializers. Do not use a constructor initializer list only to establish member defaults.
+
 ## Code Review
 
 - For pull request or diff review tasks, read and follow `.agents/skills/code-review/SKILL.md`.
