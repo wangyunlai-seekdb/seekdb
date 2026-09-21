@@ -178,6 +178,7 @@ SQL_UNITY_GROUPS = [
         name = "ob_sql_engine_1",
         language = "c++",
         srcs = [
+            "src/sql/engine/graph/graph_feedback_loop_op.cpp",
             "src/sql/engine/graph/graph_expand.cpp",
             "src/sql/engine/window_function/ob_window_function_op.cpp",
             "src/sql/engine/opt_statistics/ob_optimizer_stats_gathering_op.cpp",
@@ -1181,6 +1182,7 @@ SQL_UNITY_GROUPS = [
         name = "ob_sql_optimizer_1",
         language = "c++",
         srcs = [
+            "src/sql/optimizer/graph_feedback_loop_log_op.cpp",
             "src/sql/optimizer/ob_log_plan_factory.cpp",
             "src/sql/optimizer/ob_log_select_into.cpp",
             "src/sql/optimizer/ob_log_set.cpp",

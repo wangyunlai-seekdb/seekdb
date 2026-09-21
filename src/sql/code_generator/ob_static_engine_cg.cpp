@@ -43,11 +43,13 @@
 #include "sql/optimizer/ob_log_temp_table_transformation.h"
 #include "sql/optimizer/ob_log_stat_collector.h"
 #include "sql/optimizer/ob_log_expand.h"
+#include "sql/optimizer/graph_feedback_loop_log_op.h"
 #include "sql/engine/ob_operator_factory.h"
 #include "sql/engine/basic/ob_limit_op.h"
 #include "sql/engine/basic/ob_values_op.h"
 #include "sql/engine/sort/ob_sort_op.h"
 #include "sql/engine/recursive_cte/ob_recursive_union_all_op.h"
+#include "sql/engine/graph/graph_feedback_loop_op.h"
 #include "sql/engine/set/ob_merge_union_op.h"
 #include "sql/engine/set/ob_merge_intersect_op.h"
 #include "sql/engine/set/ob_merge_except_op.h"
@@ -1208,6 +1210,23 @@ int ObStaticEngineCG::generate_spec(ObLogSet &op, ObRecursiveUnionAllSpec &spec,
   return ret;
 }
 
+int ObStaticEngineCG::generate_spec(GraphFeedbackLoopLogOp &op,
+                                    GraphFeedbackLoopSpec &spec,
+                                    const bool in_root_job)
+{
+  int ret = OB_SUCCESS;
+  UNUSED(in_root_job);
+  if (OB_FAIL(generate_recursive_union_all_spec(op, spec))) {
+  } else {
+    spec.set_graph_path(op.get_min_hops(),
+                        op.get_max_hops(),
+                        op.is_reverse()
+                            ? GraphPathDirection::IN
+                            : GraphPathDirection::OUT);
+  }
+  return ret;
+}
+
 int ObStaticEngineCG::generate_merge_set_spec(ObLogSet &op, ObMergeSetSpec &spec)
 {
   int ret = OB_SUCCESS;
@@ -1266,7 +1285,8 @@ int ObStaticEngineCG::generate_merge_set_spec(ObLogSet &op, ObMergeSetSpec &spec
   return ret;
 }
 
-int ObStaticEngineCG::generate_recursive_union_all_spec(ObLogSet &op, ObRecursiveUnionAllSpec &spec)
+int ObStaticEngineCG::generate_recursive_union_all_spec(ObLogicalOperator &op,
+                                                        ObRecursiveUnionAllSpec &spec)
 {
   int ret = OB_SUCCESS;
   uint64_t last_cte_table_id = OB_INVALID_ID;
@@ -6335,6 +6355,10 @@ int ObStaticEngineCG::get_phy_op_type(ObLogicalOperator &log_op,
         default:
           break;
       }
+      break;
+    }
+    case log_op_def::LOG_GRAPH_FEEDBACK_LOOP: {
+      type = PHY_GRAPH_FEEDBACK_LOOP;
       break;
     }
     case log_op_def::LOG_SUBPLAN_FILTER: {
