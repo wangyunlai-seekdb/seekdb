@@ -280,9 +280,6 @@ SELECT * FROM GRAPH_TABLE(graph_social MATCH
 SELECT * FROM GRAPH_TABLE(graph_social MATCH
   (a IS person)-[e IS knows]-{1}(b IS person) COLUMNS(COUNT(e.id) AS hops)) g;
 --error ER_NOT_SUPPORTED_YET
-SELECT * FROM GRAPH_TABLE(graph_social MATCH TRAIL
-  (a IS person)-[e IS knows]->{1}(b IS person) COLUMNS(COUNT(e.id) AS hops)) g;
---error ER_NOT_SUPPORTED_YET
 SELECT * FROM GRAPH_TABLE(graph_social MATCH SIMPLE
   (a IS person)-[e IS knows]->{1}(b IS person) COLUMNS(COUNT(e.id) AS hops)) g;
 --error ER_NOT_SUPPORTED_YET
