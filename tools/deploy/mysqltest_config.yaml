@@ -8,6 +8,8 @@ runtime_configs:
       - graph.lifecycle
       - graph.boundary
       - graph.privilege
+      - graph.walk
+      - graph.graphrag
       # All top-level mysql_test/t cases.
       - a_trade_notify
       - a_trade_quick
