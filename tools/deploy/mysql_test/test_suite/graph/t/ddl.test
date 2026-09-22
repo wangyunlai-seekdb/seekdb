@@ -49,12 +49,12 @@ SELECT * FROM GRAPH_TABLE(graph_social MATCH(p IS person) COLUMNS(p.id AS id)) g
 ALTER TABLE graph_person MODIFY COLUMN age VARCHAR(40);
 DROP TABLE graph_works,graph_knows,graph_company,graph_person;
 CREATE TABLE graph_bad_key(id INT PRIMARY KEY);
---error ER_NOT_SUPPORTED_YET
-CREATE PROPERTY GRAPH graph_invalid VERTEX TABLES(graph_bad_key KEY(id) LABEL bad PROPERTIES(id));
+CREATE PROPERTY GRAPH graph_key_type VERTEX TABLES(graph_bad_key KEY(id) LABEL item PROPERTIES(id));
+DROP PROPERTY GRAPH graph_key_type;
 DROP TABLE graph_bad_key;
 CREATE TABLE graph_bad_key(id BIGINT UNSIGNED PRIMARY KEY);
---error ER_NOT_SUPPORTED_YET
-CREATE PROPERTY GRAPH graph_invalid VERTEX TABLES(graph_bad_key KEY(id) LABEL bad PROPERTIES(id));
+CREATE PROPERTY GRAPH graph_key_type VERTEX TABLES(graph_bad_key KEY(id) LABEL item PROPERTIES(id));
+DROP PROPERTY GRAPH graph_key_type;
 DROP TABLE graph_bad_key;
 CREATE TABLE graph_failed(id BIGINT PRIMARY KEY);
 --error ER_BAD_FIELD_ERROR
@@ -119,3 +119,19 @@ CREATE PROPERTY GRAPH graph_invalid VERTEX TABLES(graph_generated KEY(id) LABEL 
  SOURCE KEY(src) REFERENCES graph_generated(id)
  DESTINATION KEY(dst) REFERENCES graph_generated(id) LABEL link PROPERTIES(id));
 DROP TABLE graph_endpoint,graph_generated;
+CREATE TABLE graph_float_vertex(id FLOAT PRIMARY KEY);
+CREATE TABLE graph_float_edge(id BIGINT PRIMARY KEY,src FLOAT UNSIGNED,dst FLOAT UNSIGNED);
+--error ER_NOT_SUPPORTED_YET
+CREATE PROPERTY GRAPH graph_invalid VERTEX TABLES(graph_float_vertex KEY(id) LABEL item PROPERTIES(id))
+ EDGE TABLES(graph_float_edge KEY(id)
+ SOURCE KEY(src) REFERENCES graph_float_vertex(id)
+ DESTINATION KEY(dst) REFERENCES graph_float_vertex(id) LABEL link PROPERTIES(id));
+DROP TABLE graph_float_edge,graph_float_vertex;
+CREATE TABLE graph_double_vertex(id DOUBLE PRIMARY KEY);
+CREATE TABLE graph_double_edge(id BIGINT PRIMARY KEY,src DOUBLE UNSIGNED,dst DOUBLE UNSIGNED);
+--error ER_NOT_SUPPORTED_YET
+CREATE PROPERTY GRAPH graph_invalid VERTEX TABLES(graph_double_vertex KEY(id) LABEL item PROPERTIES(id))
+ EDGE TABLES(graph_double_edge KEY(id)
+ SOURCE KEY(src) REFERENCES graph_double_vertex(id)
+ DESTINATION KEY(dst) REFERENCES graph_double_vertex(id) LABEL link PROPERTIES(id));
+DROP TABLE graph_double_edge,graph_double_vertex;
