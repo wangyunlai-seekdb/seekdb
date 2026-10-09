@@ -18,6 +18,7 @@
 
 #include "sql/optimizer/graph_feedback_loop_log_op.h"
 #include "sql/optimizer/ob_join_order.h"
+#include "sql/optimizer/ob_log_join.h"
 #include "sql/optimizer/ob_log_table_scan.h"
 #include "sql/optimizer/ob_opt_est_cost.h"
 #include "sql/resolver/dml/ob_select_stmt.h"
@@ -35,6 +36,51 @@ const int64_t GRAPH_FEEDBACK_DEPTH_COLUMN_COUNT = 1;
 const char *GRAPH_SEED_VERTEX_ALIAS = "__g_seed_vertex";
 const char *GRAPH_STEP_EDGE_ALIAS = "__g_step_edge";
 const char *GRAPH_STEP_VERTEX_ALIAS = "__g_step_vertex";
+
+bool are_native_scan_filters_supported(
+    const ObIArray<ObRawExpr *> &filters)
+{
+  bool supported = true;
+  for (int64_t i = 0; supported && i < filters.count(); ++i) {
+    supported = filters.at(i) != nullptr && filters.at(i)->is_deterministic();
+  }
+  return supported;
+}
+
+bool is_native_graph_step_supported(
+    const ObLogicalOperator *root,
+    const ObLogTableScan *edge_scan,
+    const ObLogTableScan *target_scan)
+{
+  bool supported = root != nullptr;
+  if (supported && root == edge_scan) {
+    // GraphExpand evaluates filters copied into the edge scan descriptor. Keep
+    // volatile filters on the relational path: their evaluation count and
+    // side effects must not change when the recursive child is bypassed.
+    supported = are_native_scan_filters_supported(root->get_filter_exprs())
+        && are_native_scan_filters_supported(root->get_startup_exprs());
+  } else if (supported && root == target_scan) {
+    // The current vertex lookup validates identity/existence only. Until it
+    // evaluates target scan filters with relational cadence, any such filter
+    // must keep the recursive step on the fallback runtime.
+    supported = root->get_filter_exprs().empty()
+        && root->get_startup_exprs().empty();
+  } else if (supported && root->get_type() != LOG_TABLE_SCAN) {
+    // Filters owned by joins/sorts/materialization are not represented in a
+    // GraphExpandScanDesc, so native execution cannot silently skip them.
+    supported = root->get_filter_exprs().empty()
+        && root->get_startup_exprs().empty();
+    if (supported && root->get_type() == LOG_JOIN) {
+      const ObLogJoin *join = static_cast<const ObLogJoin *>(root);
+      supported = join->get_other_join_conditions().empty();
+    }
+  }
+  for (int64_t i = 0; supported && i < root->get_num_of_child(); ++i) {
+    supported = is_native_graph_step_supported(
+        root->get_child(i), edge_scan, target_scan);
+  }
+  return supported;
+}
 
 const ObLogTableScan *find_internal_scan(const ObLogicalOperator *root,
                                          const char *table_alias);
@@ -244,9 +290,19 @@ const char *path_mode_name(GraphPathMode path_mode)
 
 } // namespace
 
+bool GraphFeedbackLoopLogOp::can_use_basic_native_runtime() const
+{
+  const ObLogicalOperator *anchor = get_child(first_child);
+  return anchor != nullptr && native_step_supported_
+      && supports_basic_native_graph_feedback(
+             path_desc_, expand_access_desc_,
+             anchor->get_output_exprs().count());
+}
+
 int GraphFeedbackLoopLogOp::initialize_expand_access()
 {
   int ret = OB_SUCCESS;
+  native_step_supported_ = false;
   ObLogicalOperator *anchor = get_child(first_child);
   ObLogicalOperator *step = get_child(second_child);
   ObLogTableScan *source_scan = nullptr;
@@ -286,6 +342,8 @@ int GraphFeedbackLoopLogOp::initialize_expand_access()
     step_access_method_ = expand_access_desc_.uses_adjacency_index()
         ? GraphFeedbackAccessMethod::INDEX_SCAN
         : GraphFeedbackAccessMethod::FULL_SCAN;
+    native_step_supported_ = is_native_graph_step_supported(
+        step, edge_scan, target_scan);
   }
   return ret;
 }
@@ -387,13 +445,15 @@ int GraphFeedbackLoopLogOp::get_plan_item_info(PlanText &plan_text,
   if (OB_FAIL(ObLogicalOperator::get_plan_item_info(plan_text, plan_item))) {
   } else {
     BEGIN_BUF_PRINT;
-    if (OB_FAIL(BUF_PRINTF("direction=%s, hops={%ld,%ld}, access=%s, mode=%s",
+    if (OB_FAIL(BUF_PRINTF("direction=%s, hops={%ld,%ld}, access=%s, mode=%s, runtime=%s",
                            path_desc_.direction_ == GraphPathDirection::IN
                                ? "IN" : "OUT",
                            path_desc_.lower_bound_,
                            path_desc_.upper_bound_,
                            access_method_name(step_access_method_),
-                           path_mode_name(path_desc_.path_mode_)))) {
+                           path_mode_name(path_desc_.path_mode_),
+                           can_use_basic_native_runtime()
+                               ? "native" : "fallback"))) {
     }
     END_BUF_PRINT(plan_item.special_predicates_, plan_item.special_predicates_len_);
   }

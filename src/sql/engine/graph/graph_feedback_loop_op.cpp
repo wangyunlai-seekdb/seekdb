@@ -101,13 +101,10 @@ bool GraphFeedbackRowDesc::supports_basic_native_output(
     const GraphExpandAccessDesc &access_desc) const
 {
   return is_valid(path_desc, access_desc)
-      && path_desc.source_element_id_ == path_desc.target_element_id_
-      && path_desc.row_shape_ == GraphPathRowShape::PER_MATCH
-      && path_desc.path_mode_ == GraphPathMode::WALK
-      && !path_desc.need_path_
-      && access_desc.source_table_id_ == access_desc.target_table_id_
       && trail_key_expr_count_ == 0
-      && payload_expr_count_ == 0;
+      && payload_expr_count_ == 0
+      && supports_basic_native_graph_feedback(
+             path_desc, access_desc, output_expr_count_);
 }
 
 namespace
@@ -1100,6 +1097,12 @@ int GraphFeedbackLoopOp::get_next_native_row()
       LOG_WARN("failed to produce native graph feedback row", K(ret));
     }
   }
+  if (OB_SUCCESS != ret && ret != OB_ITER_END) {
+    // try_check_status() can fail before control reaches GraphFeedbackRuntime.
+    // Release any open DAS scan and frontier state on every terminal error,
+    // rather than relying solely on the executor's later close/destroy pass.
+    reset_native_runtime();
+  }
   return ret;
 }
 
@@ -1264,6 +1267,7 @@ OB_SERIALIZE_MEMBER((GraphFeedbackLoopSpec, RecursivePumpSpec),
                     path_desc_.need_path_,
                     expand_access_desc_,
                     output_row_desc_,
+                    native_step_supported_,
                     seed_key_exprs_,
                     source_scan_desc_,
                     edge_scan_desc_,
