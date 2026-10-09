@@ -525,7 +525,8 @@ int ObLogTableScan::generate_access_exprs()
     LOG_WARN("failed to prepare match dependent exprs", K(ret));
   } else if (OB_FAIL(generate_necessary_domain_exprs())) {
   } else if (OB_FAIL(allocate_group_id_expr())) {
-  } else if (NULL != group_id_expr_ && use_batch_ && OB_FAIL(access_exprs_.push_back(group_id_expr_))) {
+  } else if (NULL != group_id_expr_ && use_batch_
+             && OB_FAIL(add_var_to_array_no_dup(access_exprs_, group_id_expr_))) {
     LOG_WARN("failed to push back expr", K(ret));
   } else if (OB_FAIL(append_array_no_dup(access_exprs_, rowkey_exprs_))) {
   } else if (OB_FAIL(append_array_no_dup(access_exprs_, part_exprs_))) {
@@ -1020,6 +1021,9 @@ int ObLogTableScan::allocate_group_id_expr()
   if (OB_ISNULL(get_plan())) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("unexpected nullptr", K(ret));
+  } else if (!use_group_id() || group_id_expr_ != nullptr) {
+    // get_op_exprs() may be called more than once while a graph operator
+    // registers child DAS expressions. Keep the same pseudo column instance.
   } else if (use_group_id() && OB_FAIL(ObOptimizerUtil::allocate_group_id_expr(get_plan(), group_id_expr))) {
     LOG_WARN("failed to allocate group id expr", K(ret));
   } else {
@@ -1068,7 +1072,7 @@ int ObLogTableScan::generate_necessary_rowkey_and_partkey_exprs()
   } else if (is_table_without_pk && is_index_global_ && index_back_ &&
              OB_FAIL(get_part_column_exprs(table_id_, ref_table_id_, part_exprs_))) {
     LOG_WARN("failed to get part column exprs", K(ret));
-  } else if ((has_lob_column || need_get_rowkey_exprs())
+  } else if ((has_lob_column || need_get_rowkey_exprs()) && rowkey_exprs_.empty()
       && OB_FAIL(get_plan()->get_rowkey_exprs(table_id_, ref_table_id_, rowkey_exprs_))) {
     LOG_WARN("failed to generate rowkey exprs", K(ret));
   } else { /*do nothing*/ }
