@@ -11,6 +11,7 @@ runtime_configs:
       - graph.walk
       - graph.timeout
       - graph.lookup_failure
+      - graph.cancellation
       - graph.graphrag
       # All top-level mysql_test/t cases.
       - a_trade_notify
