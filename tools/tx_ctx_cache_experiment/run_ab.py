@@ -78,7 +78,8 @@ def sysbench(case, command='run', events=0, seconds=20, threads=8, output=None):
     print(json.dumps({'phase': 'sysbench', 'args': args}), flush=True)
     env = os.environ.copy()
     env['LUA_PATH'] = str(SYSBENCH_LUA / '?.lua') + ';;'
-    result = subprocess.run(args, capture_output=True, text=True, timeout=180, env=env)
+    result = subprocess.run(args, capture_output=True, text=True,
+                            timeout=max(180, seconds + 120), env=env)
     if output is not None:
         output.write_text(result.stdout + result.stderr)
     print(result.stdout[-2000:], flush=True)

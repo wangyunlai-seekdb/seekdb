@@ -705,6 +705,9 @@ TxCtxCache *ObLSTxService::get_or_create_replay_tx_ctx_cache_() const
 
 void ObLSTxService::close_replay_tx_ctx_cache()
 {
+  if (nullptr == ATOMIC_LOAD(&replay_tx_ctx_cache_)) {
+    return;
+  }
   WLockGuard guard(rwlock_);
   TxCtxCache *cache = ATOMIC_TAS(&replay_tx_ctx_cache_, nullptr);
   if (nullptr != cache) {

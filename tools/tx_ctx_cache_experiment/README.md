@@ -12,9 +12,10 @@ has no `master` branch.
 - Checked-out contexts retain the cache control block independently of the
   session. Closing the session deletes free contexts immediately; a later
   transaction cleanup deletes its context and drops the remaining reference.
-- The local replay window has a per-LS cache of at most 64 free contexts. It
-  closes after local replay is disabled and submit tasks have drained, and on
-  LS offline/reset. It does not wait to identify the last transaction.
+- Replay has a per-LS cache of at most 64 free contexts. It closes when all
+  committed log has been submitted and pending tasks reach zero, including on
+  continuous standby replay. Local append handoff and LS offline/reset are
+  additional close points. It does not identify the last transaction.
 - Tx-table recovery has a cache of at most 64 free contexts, closed at the end
   of the SSTable scan. Restored contexts may outlive that scan safely.
 - Allocation uses nonthrowing `operator new`, with explicit 64-byte alignment
@@ -24,7 +25,11 @@ On this build, `sizeof(ObTxCtx) = 10944`, `alignof(ObTxCtx) = 64`, and
 `sizeof(TxCtxCache) = 64`. Each session adds one pointer. The object allocation
 also includes a 24-byte header and up to 63 bytes of alignment padding.
 
-## Validation on 2026-10-10
+## Initial prototype validation on 2026-10-10
+
+The following short A/B table was measured for commit `d4c7e7d4f172`, before
+the replay-idle callback was added. It is not formal performance evidence for
+the current implementation. See the follow-up record below.
 
 Both release binaries were built with `CARGO_NET_OFFLINE=true ob-make seekdb`
 from their `build_release` directories, without a `-j` option. `git diff --check`
@@ -38,7 +43,10 @@ committed sentinel row and excluded the uncommitted row. This primarily covers
 log replay; it does not establish coverage of nonempty tx-context SSTable recovery.
 
 The local shared development host has 80 logical CPUs. Each server was pinned
-to CPUs 48-55, with `cpu_count=8` and `memory_limit=4G`. Sysbench 1.0.20 used four
+to CPUs 48-55, with `cpu_count=8` and the legacy `memory_limit=4G` option.
+That option is ignored by current memory sizing, so this test used automatic
+memory budgeting; it must not be described as a measured 4 GiB limit.
+Sysbench 1.0.20 used four
 10,000-row tables, eight client threads, uniform keys, fixed seed 20261010,
 text protocol, a five-second warmup and 20 seconds per measured workload.
 Startup used INFO logging to capture replay boundaries; measured foreground
@@ -81,14 +89,70 @@ Raw artifacts from this run are in `/tmp/seekdb-txctx-cache-test.VvY5dZ`:
 `uniform_results.json`, `uniform-*.txt`, restart logs, and
 `connections-open.txt` / `connections-closed.txt`.
 
-## Remaining boundary: continuous standby replay
+## Follow-up: restart and standby replay
 
-In this prototype, a standby that remains in replay mode keeps its bounded
-per-LS cache until LS offline/reset or a switch to local append. It does not
-close the cache merely because replay catches up. This does not yet satisfy
-the idle-zero goal for continuous standby replay. A later iteration must tie
-that owner to a drained replay batch or replication-connection lifecycle,
-without a cleanup timer, and measure both batch and streaming replay.
+The replay-idle callback closes storage caches once the committed log tail has
+been submitted and no replay task remains. It is checked by both the submitter
+and the last replay worker, since task completion can race cursor publication.
+Batch epochs suppress repeated idle callbacks and permit new batches to notify
+independently. The owner still protects concurrent context allocation and late
+returns. No periodic cleanup is introduced.
+
+Both binaries passed crash restart and clean restart checks on an identical
+checkpoint snapshot containing four uncommitted transactions. Tablet 49401's
+SSTable contained four serialized contexts. The candidate's recovery-close log
+recorded four misses, proving that the nonempty tx-context SSTable path ran.
+Four 10,000-row sysbench tables were compared row by row using SHA-256. All
+hashes matched the original snapshot. The committed sentinel table retained
+128 rows with sum(v)=56896; all 8,000 uncommitted rows remained invisible.
+SQL-ready times were 2.144/2.146 seconds for master/candidate crash recovery and
+2.046/2.040 seconds for clean restart. These are short functional-test timings,
+not statistical evidence of a performance improvement.
+
+Both versions retained four active recovered transaction contexts in this
+deliberately unresolved-transaction fixture. The candidate's replay and recover
+cache roots were null. Live transaction state and empty reusable caches must
+not be conflated; this fixture is not an all-transaction-objects-zero assertion.
+
+Each version also passed a real local primary/standby test with 9,000 confirmed
+commits across streaming replay, standby downtime/backlog catch-up, standby
+crash restart, primary crash restart, and continued replication afterward.
+The sysbench table hashes and acknowledged-transaction counters matched at all
+six comparison points. The candidate standby's replay/recover roots and active
+transaction count were zero after streaming and after both restarts. Source
+SSTables were frozen and major compaction settled before standby bootstrap;
+the gRPC service was enabled only for these isolated instances. The test used
+the actual `memory_budget=4G` setting. Catch-up/readable-SCN delays include
+periodic timestamp refresh and must not be used as pure replay throughput.
+
+The current build and the standalone lifetime test passed. Formal sysbench
+comparison remains pending: the earlier shared-host short runs do not establish
+no regression, and binary upload for Jenkins was rejected by automatic approval
+review pending explicit user authorization.
+
+Follow-up artifacts are under
+`/data/wangyunlai.wyl/tmp/txctx-validation-20261010.BeR8Co`:
+`restart3/restart-results.json`, `restart3/checkpoint-active-contexts.json`,
+`standby4/standby-results.json`, and per-instance logs/debugger snapshots.
+
+Reproduce using `validate_recovery.py restart` or `standby`, passing `--root`,
+`--snapshot`, `--baseline`, and `--candidate`. The snapshot is the immutable
+crash snapshot generated by `run_ab.py prepare`. `inspect` reopens the completed
+restart fixtures and compares active transaction counts between both binaries.
+
+## Formal sysbench gate
+
+Use the authorized `lite_perf_guard_new` Jenkins workflow with the two exact
+locally built binaries, without changing its shared baseline. The current job
+was checked live: six workloads, 550 clients, 30 tables with 100,000 rows each,
+and sysbench `1.1.0-3ceba0b`. Set `sysbench=true`, all other workload flags false,
+`refresh_base=false`, `sysbench_warmup_time=60`, and `sysbench_runtime=300`.
+Run master/candidate/master with identical arguments; repeat if per-workload
+differences or drift are material. Preserve binary SHA-256, build source,
+job numbers, actual runtime configuration, raw workload logs and machine load.
+Require complete workload coverage, zero ignored errors/reconnects, and compare
+TPS, average latency and P99. Jenkins SUCCESS alone is insufficient. The
+latest historical job's one-second CPU-diagnostic run is not a usable baseline.
 
 ## Reproduce
 

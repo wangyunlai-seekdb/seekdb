@@ -29,6 +29,11 @@ namespace storage
 
 void ObTxCtxTableRecoverHelper::reset()
 {
+  if (nullptr != tx_ctx_cache_) {
+    STORAGE_LOG(INFO, "close recover tx ctx cache",
+                "hit_count", tx_ctx_cache_->get_hit_count(),
+                "miss_count", tx_ctx_cache_->get_miss_count());
+  }
   TxCtxCache::close(tx_ctx_cache_);
   in_multi_row_state_ = false;
   prev_meta_.reset();
