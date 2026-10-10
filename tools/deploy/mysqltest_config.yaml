@@ -9,6 +9,10 @@ runtime_configs:
       - graph.boundary
       - graph.privilege
       - graph.walk
+      - graph.trail
+      - graph.das_access
+      - graph.pagination
+      - graph.partition_access
       - graph.timeout
       - graph.lookup_failure
       - graph.cancellation
