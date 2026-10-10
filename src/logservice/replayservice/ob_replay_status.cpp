@@ -1132,12 +1132,15 @@ void ObReplayStatus::notify_replay_idle()
   LSN submitted_end;
   SCN submitted_scn;
   LSN committed_end;
+  LSN replayed_end;
   if (!is_enabled_ || nullptr == rp_sv_
       || notified_epoch >= epoch
       || 0 != ATOMIC_LOAD(&pending_task_count_)
       || OB_SUCCESS != submit_log_task_.get_next_to_submit_log_info(submitted_end, submitted_scn)
       || OB_SUCCESS != palf_handle_.get_end_lsn(committed_end)
-      || !submitted_end.is_valid() || submitted_end < committed_end) {
+      || !submitted_end.is_valid() || submitted_end < committed_end
+      || OB_SUCCESS != get_min_unreplayed_lsn(replayed_end)
+      || !replayed_end.is_valid() || replayed_end < committed_end) {
     return;
   }
   // Submission and the last replay worker can both observe idle. Generations

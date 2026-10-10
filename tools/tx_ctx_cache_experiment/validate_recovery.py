@@ -287,6 +287,14 @@ def standby_test(args):
             sync(primary, standby)
             write_batch(primary, 250)
             live_sync = sync(primary, standby)
+            # Online tablet creation and schema DDL exercise replay barriers
+            # after bootstrap, when the standby cache must close on its own.
+            primary.query('create table barrier_guard(id int primary key, v int)')
+            primary.query('insert into barrier_guard values(1,123)')
+            primary.query('alter table live_guard add column barrier_value bigint not null default 0')
+            sync(primary, standby)
+            if standby.query('select * from barrier_guard') != ((1, 123),):
+                raise RuntimeError('online DDL/barrier replay did not preserve data')
             time.sleep(2)
             state1 = standby.cache_state('after-streaming') if variant == 'cache' else None
             standby.stop(crash=True)

@@ -92,7 +92,11 @@ Raw artifacts from this run are in `/tmp/seekdb-txctx-cache-test.VvY5dZ`:
 ## Follow-up: restart and standby replay
 
 The replay-idle callback closes storage caches once the committed log tail has
-been submitted and no replay task remains. It is checked by both the submitter
+been submitted, the pending buffer count is zero, and the minimum unreplayed
+LSN reaches that tail. Pre-barrier buffer accounting can reach zero before all
+barrier queue entries have been retired, so those entries must be popped before
+an idle callback is permitted. It is
+checked by both the submitter
 and the last replay worker, since task completion can race cursor publication.
 Batch epochs suppress repeated idle callbacks and permit new batches to notify
 independently. The owner still protects concurrent context allocation and late
@@ -105,8 +109,9 @@ recorded four misses, proving that the nonempty tx-context SSTable path ran.
 Four 10,000-row sysbench tables were compared row by row using SHA-256. All
 hashes matched the original snapshot. The committed sentinel table retained
 128 rows with sum(v)=56896; all 8,000 uncommitted rows remained invisible.
-SQL-ready times were 2.144/2.146 seconds for master/candidate crash recovery and
-2.046/2.040 seconds for clean restart. These are short functional-test timings,
+SQL-ready times on the final recheck were 2.149/2.141 seconds for
+master/candidate crash recovery and 2.141/2.155 seconds for clean restart.
+These are short functional-test timings,
 not statistical evidence of a performance improvement.
 
 Both versions retained four active recovered transaction contexts in this
@@ -118,7 +123,8 @@ Each version also passed a real local primary/standby test with 9,000 confirmed
 commits across streaming replay, standby downtime/backlog catch-up, standby
 crash restart, primary crash restart, and continued replication afterward.
 The sysbench table hashes and acknowledged-transaction counters matched at all
-six comparison points. The candidate standby's replay/recover roots and active
+seven comparison points, including online tablet creation and schema DDL.
+The candidate standby's replay/recover roots and active
 transaction count were zero after streaming and after both restarts. Source
 SSTables were frozen and major compaction settled before standby bootstrap;
 the gRPC service was enabled only for these isolated instances. The test used
@@ -132,8 +138,8 @@ review pending explicit user authorization.
 
 Follow-up artifacts are under
 `/data/wangyunlai.wyl/tmp/txctx-validation-20261010.BeR8Co`:
-`restart3/restart-results.json`, `restart3/checkpoint-active-contexts.json`,
-`standby4/standby-results.json`, and per-instance logs/debugger snapshots.
+`restart-final/restart-results.json`, `restart3/checkpoint-active-contexts.json`,
+`standby-final/standby-results.json`, and per-instance logs/debugger snapshots.
 
 Reproduce using `validate_recovery.py restart` or `standby`, passing `--root`,
 `--snapshot`, `--baseline`, and `--candidate`. The snapshot is the immutable

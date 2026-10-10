@@ -1297,6 +1297,10 @@ int ObLogReplayService::handle_replay_task_(ObReplayServiceReplayTask *task_queu
             if (!replay_task->is_pre_barrier_) {
               //The forward barrier log replay thread will release memory in advance
               replay_status->dec_pending_task(replay_task->get_replay_payload_size());
+            } else {
+              // A pre-barrier's buffer was released before execution. Its
+              // queue entry has only just been popped, so notify idle here.
+              replay_status->notify_replay_idle();
             }
             free_replay_task(replay_task_to_destroy);
             //To avoid a single task occupies too long thread time, the upper limit of
