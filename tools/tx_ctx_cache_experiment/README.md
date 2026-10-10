@@ -1,9 +1,16 @@
 # ObTxCtx lifecycle cache experiment
 
-This prototype removes `ObServerObjectPool` and its last consumer, `ObTxCtx`.
+This change removes `ObServerObjectPool` and its last consumer, `ObTxCtx`.
 It starts from official `upstream/master` commit
 `f432e19740265cdc558c73bf517efd2f8a106e3f`. The configured personal `origin`
 has no `master` branch.
+
+Related work: [PR #1428](https://github.com/oceanbase/seekdb/pull/1428)
+explores transaction-context compression and uncached on-demand allocation.
+This PR is independent of that branch and keeps the uncompressed master context,
+using lifecycle-bound reuse to remove server-wide idle retention.
+[PR #1398](https://github.com/oceanbase/seekdb/pull/1398) already moved table-scan
+iterators out of the server object pool into SQL sessions.
 
 ## Ownership
 
@@ -131,10 +138,10 @@ the gRPC service was enabled only for these isolated instances. The test used
 the actual `memory_budget=4G` setting. Catch-up/readable-SCN delays include
 periodic timestamp refresh and must not be used as pure replay throughput.
 
-The current build and the standalone lifetime test passed. Formal sysbench
-comparison remains pending: the earlier shared-host short runs do not establish
-no regression, and binary upload for Jenkins was rejected by automatic approval
-review pending explicit user authorization.
+The current build and the standalone lifetime test passed. The formal Jenkins
+master/candidate/master sysbench comparison also completed; the results are
+recorded below. The earlier shared-host short runs remain preliminary evidence,
+not the basis for the foreground performance conclusion.
 
 Follow-up artifacts are under
 `/data/wangyunlai.wyl/tmp/txctx-validation-20261010.BeR8Co`:
@@ -159,6 +166,54 @@ job numbers, actual runtime configuration, raw workload logs and machine load.
 Require complete workload coverage, zero ignored errors/reconnects, and compare
 TPS, average latency and P99. Jenkins SUCCESS alone is insufficient. The
 latest historical job's one-second CPU-diagnostic run is not a usable baseline.
+
+### Completed Jenkins comparison on 2026-10-10
+
+- [Master #267](http://11.166.86.153:9090/jenkins/job/lite_perf_guard_new/267/)
+  and [master #269](http://11.166.86.153:9090/jenkins/job/lite_perf_guard_new/269/):
+  `f432e19740265cdc558c73bf517efd2f8a106e3f`.
+- [Candidate #268](http://11.166.86.153:9090/jenkins/job/lite_perf_guard_new/268/):
+  `f95f2c496e78eaecbcef36ef5d1aa7598777d953`.
+- All 18 workloads completed with zero ignored errors and zero reconnects.
+  Each measured interval lasted at least 300 seconds after a 60-second warmup.
+- The pressure target used 22 CPUs, affinity `0-21`, PERF logging, disabled
+  adaptive compaction and disabled defensive checks. Its effective memory budget
+  was automatic (`memory_budget=0M`), not 174 GiB: the configured legacy
+  `memory_limit=174G` is ignored. Master and candidate used the same settings.
+- Jenkins applies `strip -g` again during deployment. All allocated ELF sections
+  of each installed executable matched its selected uploaded binary exactly;
+  changes in stripped section-table layout explain the whole-file hash change.
+- TPS and latency changes below compare the candidate with the arithmetic mean
+  of the two master runs. Lower latency is better.
+
+| Workload | Master #267 TPS | Candidate #268 TPS | Master #269 TPS | TPS change | Avg latency change | P99 change |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| point_select | 247196.85 | 250894.77 | 248738.73 | +1.18% | -1.13% | -1.79% |
+| read_only | 10299.47 | 10324.47 | 10327.09 | +0.11% | -0.08% | 0.00% |
+| read_write | 5395.31 | 5426.61 | 5414.76 | +0.40% | -0.38% | -0.90% |
+| insert | 49969.10 | 49768.96 | 50007.67 | -0.44% | +0.41% | +2.73% |
+| update_non_index | 50754.38 | 50270.52 | 50201.18 | -0.41% | +0.37% | +0.89% |
+| write_only | 18164.11 | 18101.40 | 17929.99 | +0.30% | -0.28% | -8.61% |
+
+The geometric mean of the six normalized TPS ratios was +0.19%. Master-to-master
+TPS drift ranged from -1.29% to +0.62%. Overall throughput was approximately
+unchanged in this A/B/A run; insert showed a small measured slowdown and higher
+P99. One candidate run does not prove that these small differences are stable
+or that every metric has no regression. No sustained CPU profile was collected,
+and these foreground workloads do not establish standalone replay throughput.
+
+Verified uploaded artifacts:
+
+- Master: [binary](http://obperf.oceanbase-dev.com/files/seekdb-txctx-master-f432e1974026-20261010-BeR8Co),
+  165932112 bytes, SHA-256
+  `e8b0a5abe9c33064075ba37368b14994ac0b8748fc0cd5f403611c24bd6f369c`.
+- Candidate: [binary](http://obperf.oceanbase-dev.com/files/seekdb-txctx-cache-f95f2c496e78-20261010-BeR8Co),
+  165932720 bytes, SHA-256
+  `194dcf8d317fa547f29652eb06674dcc8dfef6c75f708437e6164404cefaf712`.
+
+Raw records under the follow-up artifact directory include
+`formal-sysbench-results.json`, `formal-sysbench-manifest.json`,
+`jenkins-{267,268,269}-console.log`, and the corresponding deployment identities.
 
 ## Reproduce
 
