@@ -21,6 +21,7 @@ runtime_configs:
       - graph.fullscan_reuse
       - graph.parameter_reuse
       - graph.fixed_correlation
+      - graph.hybrid_retrieval
       - graph.composition
       - graph.composition_steps
       - graph.direction_free
