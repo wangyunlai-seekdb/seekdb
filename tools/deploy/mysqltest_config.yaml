@@ -24,6 +24,7 @@ runtime_configs:
       - graph.hybrid_retrieval
       - graph.transaction_provenance
       - graph.computed_bindings
+      - graph.demand_output
       - graph.composition
       - graph.composition_steps
       - graph.direction_free
