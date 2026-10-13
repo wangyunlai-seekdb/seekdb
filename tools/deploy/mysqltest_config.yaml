@@ -26,6 +26,7 @@ runtime_configs:
       - graph.computed_bindings
       - graph.demand_output
       - graph.key_projection
+      - graph.late_projection
       - graph.composition
       - graph.composition_steps
       - graph.direction_free
