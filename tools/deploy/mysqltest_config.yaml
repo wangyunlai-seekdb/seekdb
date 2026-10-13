@@ -12,6 +12,7 @@ runtime_configs:
       - graph.trail
       - graph.das_access
       - graph.index_predicates
+      - graph.path_arrays
       - graph.pagination
       - graph.partition_access
       - graph.timeout
