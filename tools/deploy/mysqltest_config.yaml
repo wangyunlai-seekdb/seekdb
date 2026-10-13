@@ -17,6 +17,7 @@ runtime_configs:
       - graph.reachable
       - graph.shared_frontier
       - graph.lateral_filters
+      - graph.adjacency_reuse
       - graph.pagination
       - graph.partition_access
       - graph.timeout
