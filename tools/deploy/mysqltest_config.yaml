@@ -24,6 +24,7 @@ runtime_configs:
       - graph.fixed_correlation
       - graph.hybrid_retrieval
       - graph.transaction_provenance
+      - graph.concurrent_snapshot
       - graph.computed_bindings
       - graph.demand_output
       - graph.key_projection
