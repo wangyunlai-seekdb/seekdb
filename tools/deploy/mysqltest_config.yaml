@@ -16,6 +16,7 @@ runtime_configs:
       - graph.step_output
       - graph.reachable
       - graph.shared_frontier
+      - graph.lateral_filters
       - graph.pagination
       - graph.partition_access
       - graph.timeout
