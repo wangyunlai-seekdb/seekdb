@@ -22,6 +22,7 @@ runtime_configs:
       - graph.parameter_reuse
       - graph.fixed_correlation
       - graph.hybrid_retrieval
+      - graph.transaction_provenance
       - graph.composition
       - graph.composition_steps
       - graph.direction_free
