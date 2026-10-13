@@ -38,6 +38,7 @@ runtime_configs:
       - graph.pagination
       - graph.partition_access
       - graph.timeout
+      - graph.deadline
       - graph.lookup_failure
       - graph.cancellation
       - graph.memory_limit
