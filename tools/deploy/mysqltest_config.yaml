@@ -18,6 +18,8 @@ runtime_configs:
       - graph.shared_frontier
       - graph.lateral_filters
       - graph.adjacency_reuse
+      - graph.composition
+      - graph.composition_steps
       - graph.pagination
       - graph.partition_access
       - graph.timeout
