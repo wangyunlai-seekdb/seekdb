@@ -27,6 +27,7 @@ runtime_configs:
       - graph.demand_output
       - graph.key_projection
       - graph.late_projection
+      - graph.filtered_topk
       - graph.composition
       - graph.composition_steps
       - graph.direction_free
