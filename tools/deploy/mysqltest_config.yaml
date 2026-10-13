@@ -12,6 +12,7 @@ runtime_configs:
       - graph.trail
       - graph.das_access
       - graph.index_predicates
+      - graph.empty_binary_keys
       - graph.path_arrays
       - graph.step_output
       - graph.reachable
@@ -169,6 +170,7 @@ runtime_configs:
       - expr.expr_position
       - expr.func_equal
       - expr.func_length
+      - expr.empty_binary_literal
       - expr.func_regexp
       - expr.mul
       - foreign_key.dml_147
