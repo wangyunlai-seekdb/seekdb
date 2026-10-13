@@ -571,13 +571,15 @@ public:
                     const ObString &database_name,
                     const ObIArray<GraphExprBinding> &bindings,
                     const ParseNode *match_number,
-                    bool allow_outer_reference)
+                    bool allow_outer_reference,
+                    bool allow_unqualified_outer_reference = false)
     : builder_(builder),
       graph_(graph),
       database_name_(database_name),
       bindings_(bindings),
       match_number_(match_number),
-      allow_outer_reference_(allow_outer_reference)
+      allow_outer_reference_(allow_outer_reference),
+      allow_unqualified_outer_reference_(allow_unqualified_outer_reference)
   {}
 
   int rewrite(const ParseNode &source, ParseNode *&result)
@@ -658,7 +660,7 @@ private:
         || source.children_[2] == nullptr || source.children_[2]->type_ != T_IDENT) {
       ret = unsupported("qualified graph variable.property references");
     } else if (source.children_[1] == nullptr) {
-      if (allow_outer_reference_) {
+      if (allow_outer_reference_ && allow_unqualified_outer_reference_) {
         result = builder_.clone(source);
       } else {
         ret = unsupported("unqualified columns inside GRAPH_TABLE path expressions");
@@ -882,6 +884,7 @@ private:
   const ObIArray<GraphExprBinding> &bindings_;
   const ParseNode *match_number_;
   bool allow_outer_reference_;
+  bool allow_unqualified_outer_reference_;
 };
 
 int add_expr_binding(ObIArray<GraphExprBinding> &bindings,
@@ -1020,7 +1023,7 @@ int rewrite_graph_filter(GraphRelationBuilder &builder,
                          const GraphBinding *binding,
                          const GraphBinding *forbidden_one,
                          const GraphBinding *forbidden_two,
-                         bool allow_outer,
+                         bool allow_unqualified_outer,
                          ParseNode *&condition)
 {
   int ret = OB_SUCCESS;
@@ -1040,8 +1043,15 @@ int rewrite_graph_filter(GraphRelationBuilder &builder,
                                            forbidden_two, nullptr, -1,
                                            !forbidden_two->element_->is_vertex()))) {
     } else {
+      // Preserve references outside the graph-variable namespace for normal
+      // LATERAL resolution. Each outer row may supply its own seed, edge
+      // predicate or endpoint constraint. Other declared graph variables stay
+      // forbidden here; they are not mistaken for outer correlation.
+      // Edge/endpoint outer references must be qualified: an unqualified
+      // name could otherwise bind to a hidden base-table column after lowering.
+      // Keep the pre-existing unqualified seed-filter behavior unchanged.
       GraphExprRewriter rewriter(builder, graph, database_name, expr_bindings,
-                                 nullptr, allow_outer);
+                                 nullptr, true, allow_unqualified_outer);
       ret = rewriter.rewrite(*filter, condition);
     }
   }
