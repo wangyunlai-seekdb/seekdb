@@ -20,6 +20,8 @@ runtime_configs:
       - graph.adjacency_reuse
       - graph.composition
       - graph.composition_steps
+      - graph.direction_free
+      - graph.direction_free_heterogeneous
       - graph.pagination
       - graph.partition_access
       - graph.timeout
