@@ -22,6 +22,8 @@ runtime_configs:
       - graph.composition_steps
       - graph.direction_free
       - graph.direction_free_heterogeneous
+      - graph.shortest
+      - graph.shortest_fallback
       - graph.pagination
       - graph.partition_access
       - graph.timeout
