@@ -253,7 +253,7 @@ SELECT
     ) AS rolling_sum_3_days
 FROM 
     t1;
-SELECT
+SELECT 
     c1,
     SUM(c2) OVER (
         ORDER BY c1

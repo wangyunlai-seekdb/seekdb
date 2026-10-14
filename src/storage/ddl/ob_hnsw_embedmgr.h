@@ -80,7 +80,7 @@ public:
   int set_text(const blocksstable::ObStorageDatum &text,
                ObArenaAllocator &allocator,
                const common::ObLobReadOptions &lob_read_options);
-
+  
   // Deep copy extra non-embedding columns
   int set_extra_cols(const common::ObArray<blocksstable::ObStorageDatum> &src_extras, ObArenaAllocator &allocator);
   const common::ObArray<blocksstable::ObStorageDatum>& get_extra_cols() const { return extra_values_; }

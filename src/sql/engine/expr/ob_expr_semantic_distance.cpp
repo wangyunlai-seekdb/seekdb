@@ -26,7 +26,7 @@
  #include "data_plane/vector/ob_vector_cosine_distance.h"
  #include "data_plane/vector/ob_vector_ip_distance.h"
  #include "data_plane/vector/ob_vector_l1_distance.h"
-
+ 
  namespace oceanbase
  {
  namespace sql
@@ -115,13 +115,11 @@
    
    if (3 != expr.arg_cnt_) {
      ret = OB_NOT_SUPPORTED;
-     LOG_WARN("unexpected argument count", K(ret), K(expr.arg_cnt_));
    } else {
      ObDatum *datum = NULL;
      if (OB_FAIL(expr.args_[2]->eval(ctx, datum))) {
      } else if (datum->is_null()) {
        ret = OB_INVALID_ARGUMENT;
-       LOG_WARN("distance_type is null", K(ret));
      } else {
        dis_type = static_cast<ObExprVectorDistance::ObVecDisType>(datum->get_int());
      }
@@ -143,7 +141,7 @@
    
    return ret;
  }
-
+ 
  int ObExprSemanticVectorDistance::is_valid_for_generated_column(
      const ObRawExpr *expr,
      const common::ObIArray<ObRawExpr *> &exprs,
@@ -154,6 +152,6 @@
    is_valid = false;
    return OB_SUCCESS;
  }
-
+ 
  } // namespace sql
  } // namespace oceanbase 

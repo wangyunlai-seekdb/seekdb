@@ -66,14 +66,14 @@ private:
   int succ();
   int finish();
   virtual int cleanup_impl() override;
-
-  int deep_copy_fork_table_arg(const obcall::ObForkTableArg &arg);
+  
+  int deep_copy_fork_table_arg(const obcall::ObForkTableArg &arg); 
   int get_schema_guard(share::schema::ObSchemaGetterGuard &schema_guard);
   int build_fork_info(
       const ObSEArray<ObTabletID, 4> &src_tablet_ids,
       const ObSEArray<ObTabletID, 4> &dst_tablet_ids,
       storage::ObTableForkInfo &fork_info);
-
+  
   ObLocalManagementService *local_management_service_;
   obcall::ObForkTableArg fork_table_arg_;
   bool is_data_complement_;

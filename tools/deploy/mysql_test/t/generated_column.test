@@ -139,12 +139,12 @@ create table jx_t1(
 connect (obsys,$OBMYSQL_MS0,admin,$OBMYSQL_PWD,test,$OBMYSQL_PORT);
 connection obsys;
 select column_id, column_name, orig_default_value, cur_default_value, prev_column_id from oceanbase.__all_column
-    where table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id
+    where table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id 
         where a.table_name = 'jx_t1' and b.database_name='jx_db')
     order by column_id, prev_column_id;
 select column_id, column_name, orig_default_value, cur_default_value, prev_column_id from oceanbase.__all_column
-    where table_id in (select table_id from oceanbase.__all_table
-    where data_table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id
+    where table_id in (select table_id from oceanbase.__all_table 
+    where data_table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id 
         where a.table_name = 'jx_t1' and b.database_name='jx_db'))
     order by column_id, prev_column_id;
 connection default;
@@ -158,12 +158,12 @@ alter table jx_t1
     change column obschema_c_5_z obschema_c_5_Oz varchar(1024) NOT NULL;
 connection obsys;
 select column_id, column_name, orig_default_value, cur_default_value, prev_column_id from oceanbase.__all_column
-    where table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id
-        where a.table_name = 'jx_t1' and b.database_name='jx_db')
+    where table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id 
+        where a.table_name = 'jx_t1' and b.database_name='jx_db') 
     order by column_id, prev_column_id;
 select column_id, column_name, orig_default_value, cur_default_value, prev_column_id from oceanbase.__all_column
-    where table_id in (select table_id from oceanbase.__all_table
-    where data_table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id
+    where table_id in (select table_id from oceanbase.__all_table 
+    where data_table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id 
         where a.table_name = 'jx_t1' and b.database_name='jx_db'))
     order by column_id, prev_column_id;
 connection default;
@@ -182,9 +182,9 @@ alter table jx_t2 change column c2 col2 varchar(20);
 drop index idx on jx_t2;
 connection obsys;
 select column_id, column_name, orig_default_value, cur_default_value, prev_column_id from oceanbase.__all_column
-    where table_id in (select table_id from oceanbase.__all_table
-    where data_table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id
-        where a.table_name = 'jx_t2' and b.database_name='jx_db'))
+    where table_id in (select table_id from oceanbase.__all_table 
+    where data_table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id 
+        where a.table_name = 'jx_t2' and b.database_name='jx_db')) 
     order by column_id, prev_column_id;
 connection default;
 
@@ -196,9 +196,9 @@ drop index idx on jx_t3;
 drop index idx2 on jx_t3;
 connection obsys;
 select column_id, column_name, orig_default_value, cur_default_value, prev_column_id from oceanbase.__all_column
-    where table_id in (select table_id from oceanbase.__all_table
-    where data_table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id
-        where a.table_name = 'jx_t3' and b.database_name='jx_db'))
+    where table_id in (select table_id from oceanbase.__all_table 
+    where data_table_id in (select table_id from oceanbase.__all_table a left join oceanbase.__all_database b on a.database_id=b.database_id 
+        where a.table_name = 'jx_t3' and b.database_name='jx_db')) 
     order by column_id, prev_column_id;
 connection default;
 

@@ -96,7 +96,7 @@ class ObDDLMergeSliceTask: public share::ObITask
 public:
   ObDDLMergeSliceTask();
   int init(const ObDDLTabletMergeDagParamV2 &ddl_merge_param,
-           const int64_t start_slice_idx,
+           const int64_t start_slice_idx, 
            const int64_t end_slice_idx);
   virtual int process() override;
   virtual void task_debug_info_to_string(char *buf, const int64_t buf_len, int64_t &pos) const override;

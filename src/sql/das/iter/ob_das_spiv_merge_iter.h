@@ -96,7 +96,7 @@ public:
     ObDASSPIVMergeIter()
     : ObDASIter(ObDASIterType::DAS_ITER_SPIV_MERGE),
       mem_context_(nullptr),
-      allocator_(lib::ObMemAttr("SPIVMergeIter"), OB_MALLOC_NORMAL_BLOCK_SIZE),
+      allocator_(lib::ObMemAttr("SPIVMergeIter"), OB_MALLOC_NORMAL_BLOCK_SIZE), 
       tx_desc_(nullptr),
       snapshot_(nullptr),
       inv_idx_scan_iter_(nullptr),

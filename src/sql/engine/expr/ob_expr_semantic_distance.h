@@ -60,11 +60,11 @@
    static int calc_semantic_vector_distance(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &res_datum);
    
    virtual int cg_expr(ObExprCGCtx &expr_cg_ctx, const ObRawExpr &raw_expr, ObExpr &rt_expr) const override;
-
+   
    virtual int is_valid_for_generated_column(const ObRawExpr *expr,
                                              const common::ObIArray<ObRawExpr *> &exprs,
                                              bool &is_valid) const override;
-
+   
  private:
    DISALLOW_COPY_AND_ASSIGN(ObExprSemanticVectorDistance);
  };

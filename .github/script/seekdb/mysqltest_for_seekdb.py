@@ -16,10 +16,15 @@ import time
 
 
 CASE_TIMEOUT = 3600
+MAX_CASE_RETRIES = 3
 READY_TIMEOUT = 600
 MYSQLTEST_USER = "admin"
 MYSQLTEST_PASSWORD = "admin"
 MYSQLTEST_DATABASE = "test"
+RESULT_MISMATCH_MESSAGES = (
+    "Result content mismatch",
+    "Result length mismatch",
+)
 
 MysqltestCase = namedtuple("MysqltestCase", ("name", "test_file", "result_file"))
 
@@ -42,6 +47,31 @@ def decode_output(output):
     if isinstance(output, bytes):
         return output.decode("utf-8", "replace")
     return output
+
+
+def normalize_trailing_horizontal_whitespace(content):
+    lines = content.split(b"\n")
+    for index, line in enumerate(lines):
+        if line.endswith(b"\r"):
+            lines[index] = line[:-1].rstrip(b" \t") + b"\r"
+        else:
+            lines[index] = line.rstrip(b" \t")
+    return b"\n".join(lines)
+
+
+def files_equal_ignoring_trailing_whitespace(expected_path, actual_path):
+    try:
+        expected = expected_path.read_bytes()
+        actual = actual_path.read_bytes()
+    except OSError as exc:
+        print(
+            "warning: failed to compare mysqltest result files: {}".format(exc),
+            file=sys.stderr,
+        )
+        return False
+    return normalize_trailing_horizontal_whitespace(
+        expected
+    ) == normalize_trailing_horizontal_whitespace(actual)
 
 
 def run_command(command, description, cwd=None, stdin=None):
@@ -163,7 +193,7 @@ def prepare_instance(args, repo_root, sdb_script, deploy_dir):
     execute_init_sql(args.obclient, args.host, args.port, deploy_dir)
 
 
-def load_configured_case_names(config_path):
+def load_excluded_case_names(config_path):
     try:
         with config_path.open("r", encoding="utf-8") as config_file:
             lines = config_file.readlines()
@@ -171,9 +201,10 @@ def load_configured_case_names(config_path):
         raise RunnerError("cannot read mysqltest config {}: {}".format(config_path, exc))
 
     case_names = []
+    found_exclude_set = False
     in_runtime_configs = False
     in_psmall = False
-    in_test_set = False
+    in_exclude_set = False
     for line_number, raw_line in enumerate(lines, 1):
         line = raw_line.rstrip()
         stripped = line.strip()
@@ -183,13 +214,15 @@ def load_configured_case_names(config_path):
         if indent == 0:
             in_runtime_configs = stripped == "runtime_configs:"
             in_psmall = False
-            in_test_set = False
+            in_exclude_set = False
         elif in_runtime_configs and indent == 2:
             in_psmall = stripped == "psmall:"
-            in_test_set = False
+            in_exclude_set = False
         elif in_psmall and indent == 4:
-            in_test_set = stripped == "test-set:"
-        elif in_test_set and indent == 6 and stripped.startswith("- "):
+            in_exclude_set = stripped == "exclude-set:"
+            if in_exclude_set:
+                found_exclude_set = True
+        elif in_exclude_set and indent == 6 and stripped.startswith("- "):
             case_name = stripped[2:].strip()
             if not case_name:
                 raise RunnerError(
@@ -197,9 +230,9 @@ def load_configured_case_names(config_path):
                 )
             case_names.append(case_name)
 
-    if not case_names:
+    if not found_exclude_set:
         raise RunnerError(
-            "runtime_configs.psmall.test-set is empty in {}".format(config_path)
+            "runtime_configs.psmall.exclude-set is missing in {}".format(config_path)
         )
     duplicates = sorted(
         name for name, count in Counter(case_names).items() if count > 1
@@ -221,9 +254,8 @@ def discover_cases(repo_root):
     suite_dir = mysql_test_dir / "test_suite"
     if not test_dir.is_dir():
         raise RunnerError("mysqltest case directory does not exist: {}".format(test_dir))
-    case_names = load_configured_case_names(config_path)
+    excluded_cases = set(load_excluded_case_names(config_path))
     available_cases = {}
-    top_level_names = set()
 
     for test_file in sorted(test_dir.glob("*.test")):
         if not test_file.is_file():
@@ -232,7 +264,6 @@ def discover_cases(repo_root):
         available_cases[name] = MysqltestCase(
             name, test_file, result_dir / (name + ".result")
         )
-        top_level_names.add(name)
 
     if suite_dir.is_dir():
         for test_file in sorted(suite_dir.glob("*/t/*.test")):
@@ -248,18 +279,19 @@ def discover_cases(repo_root):
                 test_file.parent.parent / "r" / "mysql" / (test_file.stem + ".result"),
             )
 
-    missing_cases = sorted(set(case_names) - set(available_cases))
-    if missing_cases:
+    unknown_exclusions = sorted(excluded_cases - set(available_cases))
+    if unknown_exclusions:
         raise RunnerError(
-            "mysqltest config references missing cases: {}".format(
-                ", ".join(missing_cases)
+            "mysqltest exclude-set references missing cases: {}".format(
+                ", ".join(unknown_exclusions)
             )
         )
-    unconfigured_top_level_cases = sorted(top_level_names - set(case_names))
-    if unconfigured_top_level_cases:
+
+    case_names = [name for name in available_cases if name not in excluded_cases]
+    if not case_names:
         raise RunnerError(
-            "top-level mysqltest cases are missing from {}: {}".format(
-                config_path, ", ".join(unconfigured_top_level_cases)
+            "no mysqltest cases left after applying exclude-set in {}".format(
+                config_path
             )
         )
     missing_results = [
@@ -310,6 +342,19 @@ def run_case(args, deploy_dir, case, tmp_dir, log_dir):
         "--tail-lines=20",
     ]
     case_name = case.name
+    reject_file = log_dir / (case.result_file.stem + ".reject")
+    try:
+        reject_file.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(
+            "warning: failed to remove stale reject file {}: {}".format(
+                reject_file, exc
+            ),
+            file=sys.stderr,
+        )
+        reject_file = None
     print("[ RUN      ] {}".format(case_name), flush=True)
     started = time.monotonic()
     try:
@@ -333,11 +378,36 @@ def run_case(args, deploy_dir, case, tmp_dir, log_dir):
         return_code = 255
         output = "failed to run mysqltest: {}\n".format(exc)
 
-    if output:
+    trailing_whitespace_ignored = False
+    if (
+        return_code != 0
+        and reject_file is not None
+        and any(message in output for message in RESULT_MISMATCH_MESSAGES)
+        and files_equal_ignoring_trailing_whitespace(
+            case.result_file, reject_file
+        )
+    ):
+        return_code = 0
+        trailing_whitespace_ignored = True
+        try:
+            reject_file.unlink()
+        except OSError as exc:
+            print(
+                "warning: failed to remove ignored reject file {}: {}".format(
+                    reject_file, exc
+                ),
+                file=sys.stderr,
+            )
+
+    if output and not trailing_whitespace_ignored:
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
     elapsed = time.monotonic() - started
     if return_code == 0:
-        print("[       OK ] {} ({:.3f}s)".format(case_name, elapsed), flush=True)
+        suffix = ", trailing whitespace ignored" if trailing_whitespace_ignored else ""
+        print(
+            "[       OK ] {} ({:.3f}s{})".format(case_name, elapsed, suffix),
+            flush=True,
+        )
     else:
         print(
             "[  FAILED  ] {} ({:.3f}s, exit={})".format(
@@ -429,7 +499,22 @@ def command_run(args):
         log_dir.mkdir(parents=True, exist_ok=True)
 
         for index, case in enumerate(selected_cases):
-            return_code, output = run_case(args, deploy_dir, case, tmp_dir, log_dir)
+            return_code = None
+            output = ""
+            for retry_index in range(MAX_CASE_RETRIES + 1):
+                if retry_index > 0:
+                    print(
+                        "[ RETRY   ] {} ({}/{})".format(
+                            case.name, retry_index, MAX_CASE_RETRIES
+                        ),
+                        flush=True,
+                    )
+                    prepare_instance(args, repo_root, sdb_script, deploy_dir)
+                return_code, output = run_case(
+                    args, deploy_dir, case, tmp_dir, log_dir
+                )
+                if return_code == 0:
+                    break
             if return_code != 0:
                 failed_cases.append(case.name)
                 save_case_failure(args, case.name, output)

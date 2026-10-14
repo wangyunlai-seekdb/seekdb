@@ -459,7 +459,7 @@ public:
   virtual bool is_valid() const = 0;
 
   /* merge related function*/
-
+  
   virtual inline int64_t get_tablet_size() const { return INVAID_RET; }
   virtual inline int64_t get_rowkey_column_num() const { return INVAID_RET; }
   virtual inline int64_t get_column_count() const { return INVAID_RET; }
@@ -566,8 +566,8 @@ public:
   virtual void reset_partition_schema();
   bool is_valid() const;
   int64_t get_convert_size() const;
-
-
+  
+  
   inline virtual void set_table_id(const uint64_t table_id) override { table_id_ = table_id; }
   inline virtual uint64_t get_table_id() const { return table_id_; }
   inline void set_tablet_id(const ObTabletID &tablet_id) { tablet_id_ = tablet_id; }
@@ -2130,7 +2130,7 @@ int ObTableSchema::add_column(const ColumnType &column)
   const char* thread_name = ob_get_origin_thread_name();
   const bool in_replay_thread = OB_NOT_NULL(thread_name)
                                 && 0 == STRCMP(thread_name, REPLAY_SERVICE_THREAD_NAME);
-
+  
   if (!column.is_valid()) {
     ret = common::OB_INVALID_ARGUMENT;
     SHARE_SCHEMA_LOG(WARN, "The column is not valid", KR(ret));

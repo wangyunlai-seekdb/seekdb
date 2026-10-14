@@ -316,15 +316,15 @@ public:
                              ObJsonArray *document_array,
                              ObJsonObject *config,
                              ObJsonObject *&body);
-  static int parse_complete_output(ObIAllocator &allocator,
+  static int parse_complete_output(ObIAllocator &allocator, 
                                    const share::ObAiModelEndpointInfo &endpoint_info,
                                    ObJsonObject *http_response,
                                    ObIJsonBase *&result);
-  static int parse_embed_output(ObIAllocator &allocator,
+  static int parse_embed_output(ObIAllocator &allocator, 
                                 const share::ObAiModelEndpointInfo &endpoint_info,
                                 ObJsonObject *http_response,
                                 ObIJsonBase *&result);
-  static int parse_rerank_output(ObIAllocator &allocator,
+  static int parse_rerank_output(ObIAllocator &allocator, 
                                  const share::ObAiModelEndpointInfo &endpoint_info,
                                  ObJsonObject *http_response,
                                  ObIJsonBase *&result);
