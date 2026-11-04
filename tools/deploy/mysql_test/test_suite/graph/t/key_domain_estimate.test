@@ -1,0 +1,56 @@
+--echo graph_key_domain_and_independent_vertex_filter
+CREATE TABLE gkd_digit(n INT PRIMARY KEY);
+INSERT INTO gkd_digit VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9);
+CREATE TABLE gkd_vertex(id INT PRIMARY KEY);
+INSERT INTO gkd_vertex SELECT a.n*100+b.n*10+c.n FROM gkd_digit a,gkd_digit b,gkd_digit c;
+CREATE TABLE gkd_edge(id INT PRIMARY KEY,src INT,dst INT,KEY adjacency(src,dst));
+INSERT INTO gkd_edge SELECT v.id*10+d.n,v.id,(v.id*10+d.n)%1000+1
+FROM gkd_vertex v,gkd_digit d WHERE (v.id*10+d.n)%1000+1<1000;
+CREATE TABLE gkd_person(id INT PRIMARY KEY,bucket INT);
+INSERT INTO gkd_person SELECT id,id%100 FROM gkd_vertex;
+CREATE PROPERTY GRAPH gkd
+VERTEX TABLES(gkd_vertex KEY(id) LABEL person PROPERTIES(id))
+EDGE TABLES(gkd_edge KEY(id) SOURCE KEY(src) REFERENCES gkd_vertex(id)
+ DESTINATION KEY(dst) REFERENCES gkd_vertex(id) LABEL knows PROPERTIES(id));
+ANALYZE TABLE gkd_vertex,gkd_edge,gkd_person;
+--source mysql_test/include/create_plan_table.inc
+# The two independently selected key sets must not be assumed to contain one
+# another. Compare stable cardinalities, not the chosen JOIN algorithm/cost.
+--disable_result_log
+EXPLAIN INTO plan_table SET statement_id='all_people'
+SELECT p.id FROM GRAPH_TABLE(gkd MATCH ANY SHORTEST
+ (a IS person WHERE a.id=0)-[e IS knows]->{2}(b IS person)
+ COLUMNS(b.id AS endpoint)) g JOIN gkd_person p ON p.id=g.endpoint;
+EXPLAIN INTO plan_table SET statement_id='filtered_people'
+SELECT p.id FROM GRAPH_TABLE(gkd MATCH ANY SHORTEST
+ (a IS person WHERE a.id=0)-[e IS knows]->{2}(b IS person)
+ COLUMNS(b.id AS endpoint)) g JOIN gkd_person p ON p.id=g.endpoint WHERE p.bucket=0;
+--enable_result_log
+SELECT filtered.cardinality*25<unfiltered.cardinality AS independent_filter_reduces_join
+FROM plan_table filtered,plan_table unfiltered
+WHERE filtered.statement_id='filtered_people' AND filtered.id=0
+ AND unfiltered.statement_id='all_people' AND unfiltered.id=0;
+SELECT p.id FROM GRAPH_TABLE(gkd MATCH ANY SHORTEST
+ (a IS person WHERE a.id=0)-[e IS knows]->{2}(b IS person)
+ COLUMNS(b.id AS endpoint)) g JOIN gkd_person p ON p.id=g.endpoint WHERE p.bucket=0 ORDER BY p.id;
+SELECT COUNT(*) AS reached,SUM(p.id IS NOT NULL) AS matched
+FROM GRAPH_TABLE(gkd MATCH ANY SHORTEST
+ (a IS person WHERE a.id=0)-[e IS knows]->{2}(b IS person)
+ COLUMNS(b.id AS endpoint)) g
+LEFT JOIN gkd_person p ON p.id=g.endpoint AND p.bucket=0;
+# DISTINCT and a non-merged projection preserve the key domain, but still
+# preserve normal SQL bag/NULL semantics in the resulting join.
+--disable_result_log
+EXPLAIN INTO plan_table SET statement_id='derived_people'
+SELECT /*+ NO_MERGE(f) */ p.id FROM
+ (SELECT DISTINCT g.endpoint FROM GRAPH_TABLE(gkd MATCH ANY SHORTEST
+ (a IS person WHERE a.id=0)-[e IS knows]->{2}(b IS person)
+ COLUMNS(b.id AS endpoint)) g) f
+JOIN gkd_person p ON p.id=f.endpoint WHERE p.bucket=0;
+--enable_result_log
+SELECT filtered.cardinality*25<unfiltered.cardinality AS derived_key_preserves_domain
+FROM plan_table filtered,plan_table unfiltered
+WHERE filtered.statement_id='derived_people' AND filtered.id=0
+ AND unfiltered.statement_id='all_people' AND unfiltered.id=0;
+DROP PROPERTY GRAPH gkd;
+DROP TABLE gkd_person,gkd_edge,gkd_vertex,gkd_digit,plan_table;

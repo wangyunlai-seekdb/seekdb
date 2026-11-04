@@ -360,9 +360,12 @@ public:
   }
   double get_base_ndv() const { return base_ndv_; }
   void set_base_ndv(double ndv) { base_ndv_ = ndv; } 
+  double get_graph_key_domain_ndv() const { return graph_key_domain_ndv_; }
+  void set_graph_key_domain_ndv(double ndv) { graph_key_domain_ndv_ = ndv; }
 
   TO_STRING_KV(K_(column_id), K_(ndv), K_(num_null), K_(avg_len), K_(hist_scale),
-               K_(min_val), K_(max_val) , K_(min_max_inited), K_(base_ndv));
+               K_(min_val), K_(max_val) , K_(min_max_inited), K_(base_ndv),
+               K_(graph_key_domain_ndv));
 private:
   uint64_t column_id_;
   double ndv_;
@@ -375,6 +378,9 @@ private:
   ObObj max_val_;
   bool min_max_inited_;
   double base_ndv_;
+  // Traversal keys sample a vertex/edge domain; their output NDV is not the
+  // domain size. Keep that distinction through direct derived-table columns.
+  double graph_key_domain_ndv_{0.0};
 };
 
 enum OptTableStatType {
@@ -631,6 +637,7 @@ public:
   OptTableMeta* get_table_meta_by_table_id(const uint64_t table_id);
   const OptColumnMeta* get_column_meta_by_table_id(const uint64_t table_id,
                                                    const uint64_t column_id) const;
+  double get_graph_key_domain_ndv(const ObRawExpr &expr) const;
   const OptDynamicExprMeta* get_dynamic_expr_meta(const ObRawExpr *expr) const;
   int add_dynamic_expr_meta(const OptDynamicExprMeta &dynamic_expr_meta) {
     return dynamic_expr_metas_.push_back(dynamic_expr_meta);

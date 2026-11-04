@@ -870,6 +870,11 @@ int ObEqualSelEstimator::get_cntcol_op_cntcol_sel(const OptTableMetas &table_met
   const ObRawExpr* right_expr = &input_right_expr;
   double left_base_ndv = -1.0;
   double right_base_ndv = -1.0;
+  const double left_domain_ndv = table_metas.get_graph_key_domain_ndv(input_left_expr);
+  const double right_domain_ndv = table_metas.get_graph_key_domain_ndv(input_right_expr);
+  const bool use_graph_domain = (op_type == T_OP_EQ || op_type == T_OP_NSEQ)
+      && (INNER_JOIN == ctx.get_join_type() || IS_OUTER_JOIN(ctx.get_join_type()))
+      && (left_domain_ndv > 0.0 || right_domain_ndv > 0.0);
   if (OB_FAIL(ObOptSelectivity::remove_ignorable_func_for_est_sel(left_expr)) ||
       OB_FAIL(ObOptSelectivity::remove_ignorable_func_for_est_sel(right_expr))) {
   } else {
@@ -888,7 +893,7 @@ int ObEqualSelEstimator::get_cntcol_op_cntcol_sel(const OptTableMetas &table_met
                                                               left_expr,
                                                               &left_ndv,
                                                               &left_nns,
-                                                              IS_ANTI_JOIN(ctx.get_join_type()) ?
+                                                              IS_ANTI_JOIN(ctx.get_join_type()) || use_graph_domain ?
                                                               &left_base_ndv :
                                                               NULL))) {
     } else if (OB_FAIL(ObOptSelectivity::calc_expr_basic_info(table_metas,
@@ -896,7 +901,7 @@ int ObEqualSelEstimator::get_cntcol_op_cntcol_sel(const OptTableMetas &table_met
                                                               right_expr,
                                                               &right_ndv,
                                                               &right_nns,
-                                                              IS_ANTI_JOIN(ctx.get_join_type()) ?
+                                                              IS_ANTI_JOIN(ctx.get_join_type()) || use_graph_domain ?
                                                               &right_base_ndv :
                                                               NULL))) {
     } else if (left_expr->get_relation_ids() == right_expr->get_relation_ids()) {
@@ -904,6 +909,14 @@ int ObEqualSelEstimator::get_cntcol_op_cntcol_sel(const OptTableMetas &table_met
                                                             left_ndv, right_ndv,
                                                             left_nns, right_nns);
     } else {
+      if (use_graph_domain) {
+        // A reached-key set and a separately filtered relation are independent
+        // subsets of their original domains, not subsets of one another.
+        // Using just their surviving NDVs would make a selective vertex
+        // predicate appear to retain every reached key.
+        left_ndv = std::max(left_ndv, std::max(left_base_ndv, left_domain_ndv));
+        right_ndv = std::max(right_ndv, std::max(right_base_ndv, right_domain_ndv));
+      }
       if (OB_NOT_NULL(ctx.get_left_rel_ids()) && OB_NOT_NULL(ctx.get_right_rel_ids()) &&
           (left_expr->get_relation_ids().overlap(*ctx.get_right_rel_ids()) ||
            right_expr->get_relation_ids().overlap(*ctx.get_left_rel_ids()))) {

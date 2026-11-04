@@ -283,6 +283,7 @@ int OptColumnMeta::assign(const OptColumnMeta &other)
   max_val_ = other.max_val_;
   min_max_inited_ = other.min_max_inited_;
   base_ndv_ = other.base_ndv_;
+  graph_key_domain_ndv_ = other.graph_key_domain_ndv_;
   return ret;
 }
 
@@ -296,6 +297,7 @@ void OptColumnMeta::init(const uint64_t column_id,
   num_null_ = num_null;
   avg_len_ = avg_len;
   base_ndv_ = ndv;
+  graph_key_domain_ndv_ = 0.0;
 }
 
 int OptTableMeta::assign(const OptTableMeta &other)
@@ -670,6 +672,7 @@ int OptTableMetas::add_set_child_stmt_meta_info(const ObSelectStmt *parent_stmt,
       double ndv = 1;
       double num_null = 0;
       double avg_len = 0;
+      const ObRawExpr *domain_expr = nullptr;
       if (OB_ISNULL(select_expr = child_stmt->get_select_items().at(i).expr_)) {
         ret = OB_ERR_UNEXPECTED;
       } else if (OB_FAIL(select_exprs.push_back(select_expr))) {
@@ -693,6 +696,30 @@ int OptTableMetas::add_set_child_stmt_meta_info(const ObSelectStmt *parent_stmt,
         } else {
           column_meta->init(OB_APP_MIN_COLUMN_ID + i, revise_selectivity_ndv(ndv), num_null, avg_len);
           column_meta->set_min_max_inited(true);
+          domain_expr = select_expr;
+          bool lossless_conv = false;
+          if (parent_stmt->is_graph_feedback_loop() && table_id == ObLogicalOperator::second_child
+              && domain_expr->get_expr_type() == T_FUN_COLUMN_CONV) {
+            if (OB_FAIL(ObOptimizerUtil::is_lossless_column_conv(domain_expr, lossless_conv))) {
+            } else if (lossless_conv) {
+              domain_expr = domain_expr->get_param_expr(4);
+            }
+          }
+          if (OB_SUCC(ret) && parent_stmt->is_graph_feedback_loop()
+              && table_id == ObLogicalOperator::second_child
+              && domain_expr->is_column_ref_expr()) {
+            const ObColumnRefRawExpr &key = static_cast<const ObColumnRefRawExpr &>(*domain_expr);
+            const OptTableMeta *key_table = child_table_metas.get_table_meta_by_table_id(key.get_table_id());
+            if (key_table != nullptr
+                && ObOptimizerUtil::find_item(key_table->get_pkey_ids(), key.get_column_id())) {
+              double domain_ndv = 0.0;
+              if (OB_FAIL(ObOptSelectivity::calc_expr_basic_info(
+                      child_table_metas, child_ctx, domain_expr, NULL, NULL, &domain_ndv))) {
+              } else {
+                column_meta->set_graph_key_domain_ndv(domain_ndv);
+              }
+            }
+          }
         }
       }
     }
@@ -784,6 +811,19 @@ int OptTableMetas::add_generate_table_meta_info(const ObDMLStmt *parent_stmt,
         } else {
           column_meta->init(column_item.column_id_, revise_selectivity_ndv(ndv), num_null, avg_len);
           column_meta->set_min_max_inited(true);
+          if (child_stmt->is_graph_feedback_loop() && select_expr->is_set_op_expr()) {
+            // The recursive child projects the current vertex key from the
+            // target scan. The anchor's one seed must not shrink its domain.
+            const OptColumnMeta *step_meta = child_table_metas.get_column_meta_by_table_id(
+                ObLogicalOperator::second_child,
+                OB_APP_MIN_COLUMN_ID + static_cast<ObSetOpRawExpr *>(select_expr)->get_idx());
+            if (step_meta != nullptr) {
+              column_meta->set_graph_key_domain_ndv(step_meta->get_graph_key_domain_ndv());
+            }
+          } else {
+            column_meta->set_graph_key_domain_ndv(
+                child_table_metas.get_graph_key_domain_ndv(*select_expr));
+          }
           ObObj maxobj;
           ObObj minobj;
           maxobj.set_max_value();
@@ -960,6 +1000,20 @@ const OptColumnMeta* OptTableMetas::get_column_meta_by_table_id(const uint64_t t
     column_meta = table_meta->get_column_meta(column_id);
   }
   return column_meta;
+}
+
+double OptTableMetas::get_graph_key_domain_ndv(const ObRawExpr &expr) const
+{
+  double domain_ndv = 0.0;
+  if (expr.is_column_ref_expr()) {
+    const ObColumnRefRawExpr &column = static_cast<const ObColumnRefRawExpr &>(expr);
+    const OptColumnMeta *meta = get_column_meta_by_table_id(
+        column.get_table_id(), column.get_column_id());
+    if (meta != nullptr) {
+      domain_ndv = meta->get_graph_key_domain_ndv();
+    }
+  }
+  return domain_ndv;
 }
 
 const OptDynamicExprMeta* OptTableMetas::get_dynamic_expr_meta(const ObRawExpr *expr) const
