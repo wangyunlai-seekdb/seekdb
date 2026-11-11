@@ -180,6 +180,9 @@ private:
   ObTablet *old_version_chain_; // 8B
   ObTabletAttr attr_; // 32B // protected by rw lock of tablet_map_
   int64_t auto_part_size_; // 8B
+  // Protected by the tablet-map bucket lock, and preserved across object wash/CAS.
+  uint64_t internal_table_change_seq_ = 0;
+  share::SCN internal_table_commit_version_ = share::SCN::min_scn();
   DISALLOW_COPY_AND_ASSIGN(ObTabletPointer); // 344B, 360B with ENABLE_OBJ_LEAK_CHECK
 };
 

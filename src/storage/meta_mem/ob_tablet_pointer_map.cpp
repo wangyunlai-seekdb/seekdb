@@ -33,9 +33,94 @@ ObTabletPointerMap::ObTabletPointerMap()
 int ObTabletPointerMap::set(const ObTabletMapKey &key, ObTabletPointer &ptr)
 {
   int ret = OB_SUCCESS;
+  if (common::is_sys_table(key.tablet_id_.id())) {
+    // Unique across insertions and commits, including deletion/recreation of
+    // the same tablet ID. Zero is reserved for an unavailable pointer.
+    ptr.internal_table_change_seq_ = ATOMIC_AAF(&next_internal_table_change_seq_, 1);
+  }
   if (OB_FAIL(ResourceMap::set(key, ptr))) {
   } else if (count() > ATOMIC_LOAD(&max_count_)) {
     ATOMIC_INC(&max_count_);
+  }
+  return ret;
+}
+
+void ObTabletPointerMap::invalidate_internal_tables_(const share::SCN &commit_version)
+{
+  if (commit_version.is_valid()) {
+    (void)invalidation_commit_version_.inc_update(commit_version);
+  }
+  // Keep invalidation independent from the pointer sequence: taking max of
+  // both sequences could hide a pointer publication delayed by another thread.
+  (void)ATOMIC_AAF(&invalidation_seq_, 1);
+}
+
+void ObTabletPointerMap::mark_all_tables_changed()
+{
+  invalidate_internal_tables_(share::SCN::min_scn());
+}
+
+void ObTabletPointerMap::notify_table_changed(
+    const uint64_t table_id, const share::SCN &commit_version)
+{
+  int ret = OB_SUCCESS;
+  const ObTabletMapKey key{common::ObTabletID(table_id)};
+  ObTabletPointerHandle handle(*this);
+  uint64_t hash_val = 0;
+  if (!common::is_sys_table(table_id)) {
+    // Virtual tables and user tables do not have the direct-ID contract.
+    return;
+  } else if (!ResourceMap::is_inited_) {
+    ret = common::OB_NOT_INIT;
+  } else if (OB_FAIL(ResourceMap::hash_func_(key, hash_val))) {
+  } else {
+    common::ObBucketHashWLockGuard guard(ResourceMap::bucket_lock_, hash_val);
+    if (OB_FAIL(ResourceMap::get_without_lock(key, handle))) {
+    } else {
+      ObTabletPointer *ptr = handle.get_resource_ptr();
+      if (commit_version.is_valid()) {
+        ptr->internal_table_commit_version_ = share::SCN::max(
+            ptr->internal_table_commit_version_, commit_version);
+      }
+      ptr->internal_table_change_seq_ = ATOMIC_AAF(&next_internal_table_change_seq_, 1);
+    }
+  }
+  if (OB_FAIL(ret)) {
+    // A commit may race tablet removal. Preserve its visibility barrier and
+    // invalidate consumers instead of dropping the notification.
+    invalidate_internal_tables_(commit_version);
+  }
+}
+
+int ObTabletPointerMap::get_change_version(
+    const uint64_t table_id, share::InternalTableChangeVersion &version)
+{
+  int ret = common::OB_SUCCESS;
+  const ObTabletMapKey key{common::ObTabletID(table_id)};
+  ObTabletPointerHandle handle(*this);
+  uint64_t hash_val = 0;
+  version = {};
+  if (OB_UNLIKELY(!common::is_sys_table(table_id))) {
+    ret = common::OB_INVALID_ARGUMENT;
+  } else if (!ResourceMap::is_inited_) {
+    ret = common::OB_NOT_INIT;
+  } else if (OB_FAIL(ResourceMap::hash_func_(key, hash_val))) {
+  } else {
+    common::ObBucketHashRLockGuard guard(ResourceMap::bucket_lock_, hash_val);
+    // Read the invalidation sequence before its watermark. A later concurrent
+    // invalidation remains pending even if its SCN is already observed here.
+    version.invalidation_seq_ = ATOMIC_LOAD(&invalidation_seq_);
+    version.commit_version_ = invalidation_commit_version_.atomic_load();
+    if (OB_FAIL(ResourceMap::get_without_lock(key, handle))) {
+      if (common::OB_ENTRY_NOT_EXIST == ret) {
+        ret = common::OB_SUCCESS;
+      }
+    } else {
+      const ObTabletPointer *ptr = handle.get_resource_ptr();
+      version.change_seq_ = ptr->internal_table_change_seq_;
+      version.commit_version_ = share::SCN::max(
+          version.commit_version_, ptr->internal_table_commit_version_);
+    }
   }
   return ret;
 }
@@ -84,10 +169,16 @@ int ObTabletPointerMap::inner_erase(const ObTabletMapKey &key)
     } else if (OB_ISNULL(tablet_ptr = ptr->get_value_ptr())) {
       ret = OB_ERR_UNEXPECTED;
       STORAGE_LOG(WARN, "value should not be nullptr", K(ret), K(key), KP(tablet_ptr));
-    } else if (OB_FAIL(ResourceMap::map_.erase_refactored(key))) {
     } else {
-      tablet_ptr->reset_obj();
-      if (OB_FAIL(ResourceMap::dec_handle_ref(ptr))) {
+      if (common::is_sys_table(key.tablet_id_.id())) {
+        // Retain the outgoing commit watermark before the pointer disappears.
+        invalidate_internal_tables_(tablet_ptr->internal_table_commit_version_);
+      }
+      if (OB_FAIL(ResourceMap::map_.erase_refactored(key))) {
+      } else {
+        tablet_ptr->reset_obj();
+        if (OB_FAIL(ResourceMap::dec_handle_ref(ptr))) {
+        }
       }
     }
   }

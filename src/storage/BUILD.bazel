@@ -589,6 +589,18 @@ cc_library(
 )
 
 cc_library(
+    name = "meta_mem_test_headers",
+    testonly = True,
+    hdrs = [
+        "meta_mem/ob_tablet_pointer_handle.h",
+        "meta_mem/ob_tablet_pointer_map.h",
+    ],
+    deps = [":storage_runtime_interface"] + _STORAGE_INTERFACE_NATIVE_DEPS,
+    tags = ["manual"],
+    visibility = ["//unittest/storage/meta_mem:__pkg__"],
+)
+
+cc_library(
     name = "tx_replay_test_headers",
     testonly = True,
     hdrs = ["tx/ob_tx_replay_executor.h"],
