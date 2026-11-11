@@ -234,9 +234,8 @@ int ObPlanSet::match_runtime_params_info(const ObPhysicalPlanCtx *params,
     for (int64_t i = 0; OB_SUCC(ret) && is_same && i < N; ++i) {
       const DatumParameter *group = params->get_group_parameter_input(i);
       Datum::State state = Datum::State::Null;
-      const bool valid = params->read_native_parameter_state(i, state);
-      const DatumParameterMetadata *attributes = params->get_parameter_metadata(i);
-      if (group == nullptr && (!valid || attributes == nullptr)) {
+      const DatumParameterMetadata *attributes = params->get_parameter_metadata(i, state);
+      if (group == nullptr && attributes == nullptr) {
         ret = OB_ERR_UNEXPECTED;
       } else if (group == nullptr && (state == Datum::State::Present || state == Datum::State::Null)
                  && can_match_parameter_metadata(attributes->type_meta_)

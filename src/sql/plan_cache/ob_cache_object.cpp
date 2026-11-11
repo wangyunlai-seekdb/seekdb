@@ -126,13 +126,12 @@ int ObPlanCacheObject::set_params_info(const ObPhysicalPlanCtx &parameters)
     // Group envelopes are sparse construction records with their real array
     // declaration. Ordinary bindings read the final value and metadata pages.
     const DatumParameter *group = parameters.get_group_parameter_input(i);
-    const DatumParameterMetadata *metadata = group != nullptr
-        ? &group->get_metadata() : parameters.get_parameter_metadata(i);
-    const DatumParameterMetadata *current_metadata = parameters.get_parameter_metadata(i);
-    Datum::State state = group != nullptr ? group->datum_.state() : Datum::State::Null;
-    const bool valid = group != nullptr || parameters.read_native_parameter_state(i, state);
+    Datum::State state = Datum::State::Null;
+    const DatumParameterMetadata *current_metadata = parameters.get_parameter_metadata(i, state);
+    const DatumParameterMetadata *metadata = group != nullptr ? &group->get_metadata() : current_metadata;
+    if (group != nullptr) { state = group->datum_.state(); }
     ObParamInfo info;
-    if (metadata == nullptr || current_metadata == nullptr || !valid) {
+    if (current_metadata == nullptr) {
       ret = OB_ERR_UNEXPECTED;
     } else {
       // Resolver flag merging updates the effective metadata page, while the

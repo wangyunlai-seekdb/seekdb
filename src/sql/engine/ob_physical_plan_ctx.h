@@ -292,7 +292,10 @@ public:
   // group leaf. A retaining consumer must clone before any binding mutation.
   const common::DatumParameterMetadata *get_parameter_metadata(int64_t index) const;
   bool has_native_parameter(int64_t index) const;
-  bool read_native_parameter_state(int64_t index, common::Datum::State &state) const;
+  // Read metadata and actual state through one checked page lookup. Failure
+  // returns nullptr and leaves state unchanged.
+  const common::DatumParameterMetadata *get_parameter_metadata(
+      int64_t index, common::Datum::State &state) const;
   int read_native_parameter(int64_t index, common::Datum &value) const;
   int materialize_parameter_for_expr(int64_t index, common::Datum *&value);
   common::Datum *locate_materialized_parameter(int64_t index) const;

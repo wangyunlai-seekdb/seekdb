@@ -1056,6 +1056,9 @@ TEST_F(NativeExecutionParameters, supplied_binding_respects_original_and_appende
     EXPECT_EQ(-index, actual.get_int());
     EXPECT_EQ(&values.eval_info(slot), plan().get_parameter_eval_info(index));
     EXPECT_EQ(nullptr, plan().locate_materialized_parameter(index));
+    Datum::State state = Datum::State::Null;
+    EXPECT_EQ(plan().get_parameter_metadata(index), plan().get_parameter_metadata(index, state));
+    EXPECT_EQ(Datum::State::Present, state);
   }
   const int64_t count = plan().get_parameter_count();
   Datum value; value.set_int(99);
@@ -2781,6 +2784,52 @@ TEST_F(NativeExecutionParameters, ready_bigint_null_rebind_preserves_point_outpu
 } // namespace
 
 namespace {
+TEST_F(NativeExecutionParameters, checked_metadata_and_state_read_preserves_typed_null_without_projection)
+{
+  ASSERT_NO_FATAL_FAILURE(load({7, 0, 9}));
+  Datum::State state = Datum::State::Nop;
+  EXPECT_EQ(nullptr, plan().get_parameter_metadata(0, state));
+  EXPECT_EQ(Datum::State::Nop, state);
+  DatumParameter typed_null;
+  ASSERT_EQ(OB_SUCCESS, typed_null.set_int(0, request_arena_));
+  typed_null.set_accuracy(ObAccuracy(20, 0)); typed_null.set_param_meta(); typed_null.set_null();
+  typed_null.set_raw_text_info(17, 23); typed_null.set_result_flags(0x1234);
+  ASSERT_EQ(OB_SUCCESS, plan().set_parameter_input(1, typed_null));
+  ASSERT_EQ(OB_SUCCESS, plan().init_datum_param_store());
+  owner_.clear_calls(); owner_.reject_all_ = true;
+  for (int64_t index : {int64_t(-1), int64_t(3), INT64_MAX}) {
+    state = Datum::State::Nop;
+    EXPECT_EQ(nullptr, plan().get_parameter_metadata(index, state));
+    EXPECT_EQ(Datum::State::Nop, state);
+  }
+  for (int64_t index = 0; index < 3; ++index) {
+    const auto *metadata = plan().get_parameter_metadata(index, state);
+    ASSERT_NE(nullptr, metadata);
+    EXPECT_EQ(plan().get_parameter_metadata(index), metadata);
+    EXPECT_EQ(index == 1 ? Datum::State::Null : Datum::State::Present, state);
+    EXPECT_EQ(nullptr, plan().locate_materialized_parameter(index));
+    if (index == 1) {
+      EXPECT_EQ(ObNullType, metadata->type_meta_.get_type());
+      EXPECT_EQ(ObIntType, metadata->param_meta_.get_type());
+      EXPECT_EQ(20, metadata->accuracy_.get_precision());
+      EXPECT_EQ(17, metadata->raw_text_pos_); EXPECT_EQ(23, metadata->raw_text_len_);
+      EXPECT_EQ(0x1234u, metadata->res_flags_);
+    }
+  }
+  EXPECT_TRUE(owner_.sizes_.empty());
+  owner_.reject_all_ = false;
+  Datum value; value.set_int(13);
+  DatumParameterMetadata attributes = *plan().get_parameter_metadata(1);
+  ASSERT_EQ(OB_SUCCESS, plan().set_runtime_parameter(1, value, request_type_, attributes));
+  ASSERT_NE(nullptr, plan().get_parameter_metadata(1, state));
+  EXPECT_EQ(Datum::State::Present, state);
+  EXPECT_EQ(ObIntType, plan().get_parameter_metadata(1)->type_meta_.get_type());
+  plan().reset_datum_param_store();
+  state = Datum::State::Nop;
+  EXPECT_EQ(nullptr, plan().get_parameter_metadata(1, state));
+  EXPECT_EQ(Datum::State::Nop, state);
+}
+
 TEST_F(NativeExecutionParameters, compact_owner_point_and_capture_never_materialize_generic_parameters)
 {
   ASSERT_NO_FATAL_FAILURE(load({INT64_MIN, 0, INT64_MAX}));

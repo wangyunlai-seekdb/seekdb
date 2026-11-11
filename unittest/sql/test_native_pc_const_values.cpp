@@ -1060,6 +1060,7 @@ TEST_F(NativePcRuntimeMatch, sparse_group_uses_its_envelope_and_special_values_k
     ASSERT_EQ(OB_SUCCESS, SqlType::from_legacy(array->data_[i].get_type_meta(), array->data_[i].get_accuracy(), leaf_types[i]));
     ASSERT_EQ(OB_SUCCESS, array->set_element_type_borrowed(i, leaf_types[i], source));
   }
+  array->data_[1].set_null();
   array->element_.set_obj_type(ObIntType); array->element_.set_accuracy(ObAccuracy(19, 0));
   DatumParameter group;
   ASSERT_EQ(OB_SUCCESS, group.set_extend(reinterpret_cast<int64_t>(array), T_EXT_SQL_ARRAY, source));
@@ -1072,6 +1073,18 @@ TEST_F(NativePcRuntimeMatch, sparse_group_uses_its_envelope_and_special_values_k
   EXPECT_EQ(41, read_parameter_value(grouped.parameters(), 0).get_int());
   auto &cached_group = NativePcConstValuesTestPeer::parameter_info(grouped.set_, 0);
   EXPECT_EQ(ObExtendType, cached_group.type_); EXPECT_EQ(ObIntType, cached_group.ext_real_type_);
+  ASSERT_NO_FATAL_FAILURE(expect_runtime_and_generic(grouped, OB_SUCCESS, true));
+  ASSERT_EQ(OB_SUCCESS, grouped.parameters().replace_batch_param_datum(1, 0, 1));
+  Datum::State selected_state = Datum::State::Present;
+  const auto *selected = grouped.parameters().get_parameter_metadata(0, selected_state);
+  ASSERT_NE(nullptr, selected);
+  EXPECT_EQ(Datum::State::Null, selected_state);
+  EXPECT_EQ(ObIntType, selected->param_meta_.get_type());
+  ObPhysicalPlan null_leaf_plan;
+  ASSERT_EQ(OB_SUCCESS, null_leaf_plan.set_params_info(grouped.parameters()));
+  ASSERT_EQ(1, null_leaf_plan.get_params_info().count());
+  EXPECT_EQ(ObExtendType, null_leaf_plan.get_params_info().at(0).type_);
+  EXPECT_FALSE(null_leaf_plan.get_params_info().at(0).is_typed_null_value_);
   ASSERT_NO_FATAL_FAILURE(expect_runtime_and_generic(grouped, OB_SUCCESS, true));
   ++cached_group.scale_;
   ASSERT_NO_FATAL_FAILURE(expect_runtime_and_generic(grouped, OB_SUCCESS, false));

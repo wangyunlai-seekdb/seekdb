@@ -774,13 +774,22 @@ const DatumParameterMetadata *ObPhysicalPlanCtx::get_parameter_metadata(int64_t 
   return has_native_parameter(index) ? &native_parameter_metadata_.at(index) : nullptr;
 }
 
-bool ObPhysicalPlanCtx::read_native_parameter_state(int64_t index, Datum::State &state) const
+const DatumParameterMetadata *ObPhysicalPlanCtx::get_parameter_metadata(
+    int64_t index, Datum::State &state) const
 {
-  if (!has_native_parameter(index)) { return false; }
+  if (!native_parameters_ready_ || index < 0 || index >= native_parameter_metadata_.count()
+      || index >= param_frame_capacity_ || index >= native_parameter_types_.count()) {
+    return nullptr;
+  }
   int64_t frame = 0, slot = 0;
   ScalarFrameLayout::locate_parameter(original_param_cnt_, index, frame, slot);
-  state = ParameterValuePage::from_handle(param_frame_ptrs_.at(frame)).state(slot);
-  return true;
+  if (frame < 0 || frame >= param_frame_ptrs_.count() || param_frame_ptrs_.at(frame) == nullptr) {
+    return nullptr;
+  }
+  const ParameterValuePage &page = ParameterValuePage::from_handle(param_frame_ptrs_.at(frame));
+  if (slot < 0 || slot >= page.capacity()) { return nullptr; }
+  state = page.state(slot);
+  return &native_parameter_metadata_.at(index);
 }
 
 int ObPhysicalPlanCtx::read_native_parameter(int64_t index, Datum &value) const
