@@ -288,6 +288,7 @@ public:
   int get_meta_mem_status(common::ObIArray<ObStorageMetaMemStatus> &info) const;
 
   int get_tablet_pointer_initial_state(const ObTabletMapKey &key, bool &initial_state);
+  share::IInternalTableChangeSource &get_internal_table_change_source() { return tablet_map_; }
   int get_tablet_resident_info(
       const ObTabletMapKey &key,
       ObTabletResidentInfo &info);

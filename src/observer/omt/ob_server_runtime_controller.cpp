@@ -1452,11 +1452,10 @@ int ObServer::obs_init_modules()
     if (OB_ISNULL(GCTX.internal_table_change_notifier_)) {
       ret = OB_NOT_INIT;
       SERVER_LOG(WARN, "internal table change notifier is not initialized", KR(ret));
-    } else if (OB_FAIL(GCTX.internal_table_change_notifier_->set_gts_provider(
+    } else if (OB_FAIL(GCTX.internal_table_change_notifier_->bind_source(
+                           mods_storage_meta_mem_mgr_->get_internal_table_change_source(),
                            get_internal_table_change_gts))) {
-      SERVER_LOG(WARN, "set internal table change notifier GTS provider failed", KR(ret));
-    } else if (OB_FAIL(GCTX.internal_table_change_notifier_->seal())) {
-      SERVER_LOG(WARN, "seal internal table change notifier failed", KR(ret));
+      SERVER_LOG(WARN, "bind internal table change source failed", KR(ret));
     }
   }
   return ret;

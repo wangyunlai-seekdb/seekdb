@@ -19,7 +19,6 @@
 #include <initializer_list>
 
 #include "lib/container/ob_array.h"
-#include "lib/lock/ob_spin_lock.h"
 #include "share/ob_internal_table_change_version.h"
 #include "share/scn.h"
 
@@ -40,11 +39,8 @@ public:
   int init();
   void destroy();
 
-  // Registration happens during server initialization. seal() freezes and
-  // sorts the registry so commit and timer threads can use lock-free lookup.
-  int register_table(uint64_t table_id);
-  int seal();
-  int set_gts_provider(GtsProvider provider);
+  // Bind the storage-owned source before starting transaction/timer workers.
+  int bind_source(IInternalTableChangeSource &source, GtsProvider provider);
 
   // Publish the committed MVCC version after a table-lock transaction ends.
   // Consumers wait for GTS to reach it before starting an inner-SQL refresh.
@@ -57,38 +53,15 @@ public:
 private:
   DISALLOW_COPY_AND_ASSIGN(InternalTableChangeNotifier);
 
-  struct TableEntry {
-    uint64_t table_id_;
-    uint64_t change_seq_;
-    SCN commit_version_;
-
-    TableEntry()
-        : table_id_(common::OB_INVALID_ID), change_seq_(1), commit_version_(SCN::min_scn()) {}
-    explicit TableEntry(const uint64_t table_id)
-        : table_id_(table_id), change_seq_(1), commit_version_(SCN::min_scn()) {}
-    TO_STRING_KV(K_(table_id), K_(change_seq), K_(commit_version));
-  };
-
-  struct TableEntryCompare {
-    bool operator()(const TableEntry &left, const TableEntry &right) const
-    {
-      return left.table_id_ < right.table_id_;
-    }
-  };
-
-  const TableEntry *find_table_entry_(uint64_t table_id) const;
-  TableEntry *find_table_entry_(uint64_t table_id);
   static bool is_commit_version_visible(const SCN &commit_version,
                                        const SCN &gts)
   {
     return commit_version.is_valid() && gts.is_valid() && gts >= commit_version;
   }
 
-  common::ObArray<TableEntry> table_entries_;
-  common::ObSpinLock lock_;  // protects initialization-time registrations
-  bool is_inited_;
-  bool is_sealed_;
-  GtsProvider gts_provider_;
+  IInternalTableChangeSource *source_ = nullptr;
+  bool is_inited_ = false;
+  GtsProvider gts_provider_ = nullptr;
 };
 
 // A consumer-local cursor for the internal tables it refreshes. Each consumer
@@ -108,7 +81,7 @@ public:
   ~InternalTableChangeWatcher() = default;
   DISALLOW_COPY_AND_ASSIGN(InternalTableChangeWatcher);
 
-  // Must be called during module initialization, before the notifier is sealed.
+  // Save this consumer's fixed physical system-table IDs during initialization.
   // Calling it while watched_tables_ is non-empty triggers OB_ASSERT.
   int init_watched_tables(std::initializer_list<uint64_t> table_ids);
 

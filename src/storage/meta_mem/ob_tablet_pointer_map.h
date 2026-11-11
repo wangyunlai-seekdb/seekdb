@@ -18,6 +18,7 @@
 #define OCEANBASE_STORAGE_OB_TABLET_POINTER_MAP_H_
 
 #include "lib/allocator/page_arena.h"
+#include "share/ob_internal_table_change_version.h"
 #include "storage/meta_mem/ob_meta_obj_struct.h"
 #include "storage/meta_mem/ob_tablet_map_key.h"
 #include "storage/meta_mem/ob_tablet_pointer.h"
@@ -41,11 +42,15 @@ public:
   ObTabletAttr tablet_attr_;
 };
 
-class ObTabletPointerMap : public ObResourceMap<ObTabletMapKey, ObTabletPointer>
+class ObTabletPointerMap : public ObResourceMap<ObTabletMapKey, ObTabletPointer>,
+                           public share::IInternalTableChangeSource
 {
 public:
   typedef ObResourceMap<ObTabletMapKey, ObTabletPointer> ResourceMap;
   ObTabletPointerMap();
+  void notify_table_changed(uint64_t table_id, const share::SCN &commit_version) override;
+  int get_change_version(uint64_t table_id, share::InternalTableChangeVersion &version) override;
+  void mark_all_tables_changed() override;
   int set(const ObTabletMapKey &key, ObTabletPointer &ptr);  // overwrite
   int erase(const ObTabletMapKey &key, ObMetaObjGuard<ObTablet> &guard);
   int exist(const ObTabletMapKey &key, bool &is_exist);
@@ -113,12 +118,16 @@ private:
       ObMetaObjGuard<ObTablet> &guard,
       bool &is_in_memory);
   int inner_erase(const ObTabletMapKey &key);
+  void invalidate_internal_tables_(const share::SCN &commit_version);
 
 public:
   using ObResourceMap<ObTabletMapKey, ObTabletPointer>::ObResourceMap;
 
 private:
   int64_t max_count_;
+  uint64_t next_internal_table_change_seq_ = 0;
+  uint64_t invalidation_seq_ = 1;
+  share::SCN invalidation_commit_version_ = share::SCN::min_scn();
 };
 
 // ATTENTION: operator should be read-only operations

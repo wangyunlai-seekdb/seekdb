@@ -1,0 +1,29 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//bazel:defs.bzl", "cc_library")
+
+package(default_testonly = True)
+
+cc_library(
+    name = "internal_table_change_source_cases",
+    srcs = ["test_internal_table_change_source.cpp"],
+    alwayslink = True,
+    deps = [
+        "//bazel/third_party:gtest",
+        "//src/storage:meta_mem_test_headers",
+    ],
+)
+
+cc_test(
+    name = "test_internal_table_change_source",
+    size = "small",
+    linkstatic = True,
+    # liboceanbase supplies the C++ runtime; select rules_cc's $ORIGIN rpath.
+    features = ["-static_cpp_runtime", "-static_link_cpp_runtimes"],
+    # The prebuilt GTest archive also needs list helpers absent from liboceanbase.
+    linkopts = ["-lstdc++"],
+    deps = [
+        ":internal_table_change_source_cases",
+        "//src/observer:liboceanbase",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+)

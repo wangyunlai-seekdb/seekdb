@@ -45,7 +45,7 @@ ObTabletPointer::ObTabletPointer()
     attr_()
 {
 #if defined(__x86_64__)
-  static_assert(sizeof(ObTabletPointer) == 320, "The size of ObTabletPointer will affect the meta memory manager, and the necessity of adding new fields needs to be considered.");
+  static_assert(sizeof(ObTabletPointer) == 336, "The size of ObTabletPointer will affect the meta memory manager, and the necessity of adding new fields needs to be considered.");
 #endif
 }
 
@@ -86,6 +86,8 @@ void ObTabletPointer::reset()
   phy_addr_.reset();
   ls_ = nullptr;
   flying_ = false;
+  internal_table_change_seq_ = 0;
+  internal_table_commit_version_ = SCN::min_scn();
 }
 
 void ObTabletPointer::reset_obj()
@@ -357,6 +359,8 @@ int ObTabletPointer::deep_copy(char *buf, const int64_t buf_len, ObTabletPointer
       pvalue->initial_state_ = initial_state_;
       pvalue->mds_table_handler_ = mds_table_handler_;// src ObTabletPointer will destroy soon
       pvalue->old_version_chain_ = old_version_chain_;
+      pvalue->internal_table_change_seq_ = internal_table_change_seq_;
+      pvalue->internal_table_commit_version_ = internal_table_commit_version_;
       value = pvalue;
       // NOTICE: cond and rw lock cannot be copied
     } else {
