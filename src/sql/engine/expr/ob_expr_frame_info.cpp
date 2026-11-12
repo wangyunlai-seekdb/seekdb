@@ -169,8 +169,19 @@ int validate_native_i64_layout_impl(const ObExprFrameInfo &expressions)
     const auto &frame = layout->frames[f];
     if (frame.index < prefix || frame.index - prefix >= expressions.datum_frame_.count()
         || expressions.datum_frame_.at(frame.index - prefix).frame_idx_ != frame.index
-        || expressions.datum_frame_.at(frame.index - prefix).frame_size_ != frame.generic_size) {
+        || expressions.datum_frame_.at(frame.index - prefix).frame_size_ != frame.generic_size
+        || frame.lane_begin >= NativeI64PointLayout::LANE_COUNT || frame.lane_count == 0
+        || frame.lane_count > NativeI64PointLayout::LANE_COUNT - frame.lane_begin) {
       return OB_ERR_UNEXPECTED;
+    }
+    for (int64_t i = 0; i < NativeI64PointLayout::LANE_COUNT; ++i) {
+      const ObExpr &expr = expressions.rt_exprs_.at(layout->expr_indexes[i]);
+      const bool in_frame = expr.frame_idx_ == frame.index;
+      const bool in_range = i >= frame.lane_begin && i - frame.lane_begin < frame.lane_count;
+      if (in_frame != in_range || (in_frame && frame.bitmap_size
+          != (expr.is_batch_result() ? ObBitVector::memory_size(layout->lanes[i].capacity) : 0))) {
+        return OB_ERR_UNEXPECTED;
+      }
     }
     for (uint32_t previous = 0; previous < f; ++previous) {
       if (layout->frames[previous].index == frame.index) { return OB_ERR_UNEXPECTED; }
@@ -228,28 +239,42 @@ int validate_native_i64_layout_impl(const ObExprFrameInfo &expressions)
   return validate_execution_frame_directory(expressions);
 }
 
+template <bool Compact>
 void initialize_native_i64_frame(const ObExprFrameInfo &expressions,
-    const NativeI64PointLayout::Frame &description, char *frame, bool compact)
+    const NativeI64PointLayout::Frame &description, char *frame)
 {
   new (frame) NativeI64FrameHeader{NativeI64FrameHeader::MAGIC, NativeI64FrameHeader::VERSION,
-                                  static_cast<uint8_t>(compact), 0};
-  for (int64_t i = 0; i < NativeI64PointLayout::LANE_COUNT; ++i) {
-    const ObExpr &expr = expressions.rt_exprs_.at(expressions.native_i64_point_layout_->expr_indexes[i]);
-    if (expr.frame_idx_ != description.index) { continue; }
-    const NativeI64ExprLayout &lane = *expr.native_i64_layout_;
-    for (uint32_t row = 0; row < lane.capacity; ++row) {
-      if (compact) {
+                                  static_cast<uint8_t>(Compact), 0};
+  const auto &layout = *expressions.native_i64_point_layout_;
+  const uint32_t end = description.lane_begin + description.lane_count;
+  for (uint32_t i = description.lane_begin; i < end; ++i) {
+    const NativeI64ExprLayout lane = layout.lanes[i];
+    uint32_t eval_off, flags_off, skip_off;
+    if constexpr (Compact) {
+      for (uint32_t row = 0; row < lane.capacity; ++row) {
         new (frame + lane.value_off + sizeof(int64_t) * row) int64_t(0);
+      }
+      for (uint32_t row = 0; row < lane.capacity; ++row) {
         new (frame + lane.state_off + row) uint8_t(static_cast<uint8_t>(Datum::State::Null));
-      } else { new (frame + expr.datum_off_ + sizeof(Datum) * row) Datum(); }
+      }
+      eval_off = lane.eval_info_off;
+      flags_off = lane.eval_flags_off;
+      skip_off = lane.pvt_skip_off;
+    } else {
+      const ObExpr &expr = expressions.rt_exprs_.at(layout.expr_indexes[i]);
+      for (uint32_t row = 0; row < lane.capacity; ++row) {
+        new (frame + expr.datum_off_ + sizeof(Datum) * row) Datum();
+      }
+      eval_off = expr.eval_info_off_;
+      flags_off = expr.eval_flags_off_;
+      skip_off = expr.pvt_skip_off_;
     }
-    auto *info = new (frame + (compact ? lane.eval_info_off : expr.eval_info_off_)) ObEvalInfo;
+    auto *info = new (frame + eval_off) ObEvalInfo;
     info->flag_ = 0;
     info->cnt_ = 0;
-    if (expr.is_batch_result()) {
-      const int64_t bitmap = ObBitVector::memory_size(lane.capacity);
-      MEMSET(frame + (compact ? lane.eval_flags_off : expr.eval_flags_off_), 0, bitmap);
-      MEMSET(frame + (compact ? lane.pvt_skip_off : expr.pvt_skip_off_), 0, bitmap);
+    if (description.bitmap_size != 0) {
+      MEMSET(frame + flags_off, 0, description.bitmap_size);
+      MEMSET(frame + skip_off, 0, description.bitmap_size);
     }
   }
 }
@@ -1253,7 +1278,8 @@ int ObExprFrameInfo::alloc_frame_after_layout_validation(ObIAllocator &exec_allo
         char *frame = static_cast<char *>(exec_allocator.alloc(bytes));
         if (frame == nullptr) { ret = OB_ALLOCATE_MEMORY_FAILED; }
         else if (description != nullptr) {
-          initialize_native_i64_frame(*this, *description, frame, compact_i64);
+          if (compact_i64) { initialize_native_i64_frame<true>(*this, *description, frame); }
+          else { initialize_native_i64_frame<false>(*this, *description, frame); }
           candidate[info.frame_idx_] = frame;
         }
         else if (OB_FAIL(initialize_execution_frame(info, *this, frame, exec_allocator))) {

@@ -824,7 +824,8 @@ TEST_F(NativeI64ExprFrames, public_cg_selects_one_native_page_and_evaluates_i64_
 
 TEST_F(NativeI64ExprFrames, nonzero_memory_starts_with_null_values_and_clear_evaluation_state)
 {
-  for (const int64_t batch : {0, 4, 65}) {
+  const int64_t batches[] = {0, 4, 65, MAX_FRAME_SIZE / (4 * sizeof(Datum))};
+  for (const int64_t batch : batches) {
     for (const bool fallback : {false, true}) {
       SCOPED_TRACE(::testing::Message() << "batch=" << batch << " fallback=" << fallback);
       NativePointCoreFixture fixture;
@@ -840,6 +841,13 @@ TEST_F(NativeI64ExprFrames, nonzero_memory_starts_with_null_values_and_clear_eva
           ASSERT_EQ(OB_SUCCESS, expr.get_native_i64_mode(eval, native));
           ASSERT_EQ(!fallback, native);
           const auto &lane = *expr.native_i64_layout_;
+          if (!fallback) {
+            NativeI64Lane native;
+            ASSERT_EQ(OB_SUCCESS, expr.get_native_i64_lane(eval, native));
+            for (uint32_t row = 0; row < native.capacity; ++row) {
+              EXPECT_EQ(0, native.values[row]);
+            }
+          }
           ObEvalInfo &info = expr.get_eval_info(eval);
           EXPECT_EQ(0, info.flag_);
           EXPECT_EQ(0, info.cnt_);
@@ -864,7 +872,9 @@ TEST_F(NativeI64ExprFrames, nonzero_memory_starts_with_null_values_and_clear_eva
           info.cnt_ = 1;
         }
         const auto &layout = *fixture.info().native_i64_point_layout_;
-        fixture.owner_.expect_frame_canary(eval.frames_[layout.frames[0].index]);
+        for (uint32_t frame = 0; frame < layout.frame_count; ++frame) {
+          fixture.owner_.expect_frame_canary(eval.frames_[layout.frames[frame].index]);
+        }
       }
     }
   }
@@ -1247,6 +1257,36 @@ TEST_F(NativeI64ExprFrames, publication_validates_static_frame_directory_and_par
   parameter->native_parameter_alias_ = true;
   ASSERT_EQ(OB_SUCCESS, info.validate_and_mark_native_i64_layout());
   EXPECT_TRUE(info.native_i64_layout_validated_);
+}
+
+TEST_F(NativeI64ExprFrames, publication_rejects_stale_initialization_ranges_and_bitmap_sizes)
+{
+  NativePointCoreFixture fixture;
+  ASSERT_NO_FATAL_FAILURE(fixture.prepare(MAX_FRAME_SIZE / (4 * sizeof(Datum))));
+  auto &info = fixture.info();
+  auto &layout = *const_cast<NativeI64PointLayout *>(info.native_i64_point_layout_);
+  ASSERT_GT(layout.frame_count, 1U);
+  ObEvalCtx eval(fixture.exec_);
+  ASSERT_NO_FATAL_FAILURE(fixture.allocate(eval));
+  const auto saved = layout.frames[0];
+  for (int corruption = 0; corruption < 4; ++corruption) {
+    if (corruption == 0) { ++layout.frames[0].lane_begin; }
+    else if (corruption == 1) { --layout.frames[0].lane_count; }
+    else if (corruption == 2) { ++layout.frames[0].bitmap_size; }
+    else { layout.frames[0].lane_begin = UINT32_MAX; }
+    for (const bool compact : {false, true}) {
+      char **frames = fixture.exec_.get_frames();
+      uint64_t count = fixture.exec_.get_frame_cnt();
+      EXPECT_EQ(OB_ERR_UNEXPECTED, info.alloc_frame(fixture.owner_,
+          fixture.parameters().get_param_frame_ptrs(), count, frames, compact));
+      EXPECT_EQ(fixture.exec_.get_frames(), frames);
+      EXPECT_EQ(fixture.exec_.get_frame_cnt(), count);
+    }
+    EXPECT_EQ(OB_ERR_UNEXPECTED, info.validate_and_mark_native_i64_layout());
+    EXPECT_FALSE(info.native_i64_layout_validated_);
+    layout.frames[0] = saved;
+    ASSERT_EQ(OB_SUCCESS, info.validate_and_mark_native_i64_layout());
+  }
 }
 
 int main(int argc, char **argv)

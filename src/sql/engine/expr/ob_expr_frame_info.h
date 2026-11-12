@@ -74,6 +74,11 @@ struct NativeI64PointLayout
     uint32_t index;
     uint32_t generic_size;
     uint32_t compact_size;
+    // CG assigns consecutive lanes to each frame. These bounds and bitmap
+    // sizes are validated with the offsets before the plan is published.
+    uint32_t lane_begin;
+    uint32_t lane_count;
+    uint32_t bitmap_size;
   };
   int64_t parameter_indexes[KEY_COUNT];
   uint32_t expr_indexes[LANE_COUNT];
@@ -81,7 +86,7 @@ struct NativeI64PointLayout
   Frame frames[LANE_COUNT];
   uint32_t frame_count;
 };
-static_assert(sizeof(NativeI64PointLayout) == 272, "complete local point layout metadata");
+static_assert(sizeof(NativeI64PointLayout) == 344, "complete local point layout metadata");
 
 struct ObExprFrameInfo
 {

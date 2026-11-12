@@ -449,7 +449,8 @@ int ObStaticEngineExprCG::finalize_native_i64_point(ObPhysicalPlan &plan, const 
       compact += bitmap;
     }
     staged.frames[staged.frame_count++] = { frame_index, static_cast<uint32_t>(generic),
-                                          static_cast<uint32_t>(compact) };
+        static_cast<uint32_t>(compact), static_cast<uint32_t>(begin),
+        static_cast<uint32_t>(count), static_cast<uint32_t>(bitmap) };
     if (OB_FAIL(frames.push_back(ObFrameInfo(count, frame_index, generic, 0, generic)))) {
     }
     begin += count;
