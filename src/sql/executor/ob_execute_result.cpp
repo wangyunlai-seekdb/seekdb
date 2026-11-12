@@ -174,18 +174,37 @@ int ObExecuteResult::get_next_native_result_row(ObExecContext &ctx, ResultRowVie
         Datum datum;
         if (!spec.is_vectorized()) { ret = expr.eval_value(eval_ctx, datum); }
         else { ret = expr.read_value(eval_ctx, idx, datum); }
-        ObDatum legacy;
-        DatumValue projected;
         if (OB_FAIL(ret)) {
-        } else if (OB_FAIL(expr.get_datum_copy_plan().legacy_view(
-                       datum, legacy, legacy_cell_scratch_ + i * 64, 64))) {
-        } else if (OB_FAIL(ResultRowView::project_value(
-                       legacy, expr.get_sql_type().legacy_meta(), expr.obj_datum_map_,
-                       native_cell_metas_[i], projected))) {
+        } else if (datum.is_null()) {
+          // NULL keeps this column's preceding scale while resetting its type
+          // and collation. Advance the history even if the row is not consumed.
+          native_cell_metas_[i].set_null();
         } else {
-          // Advance every column even if no compatibility getter consumed the
-          // last row. A caller may reuse one DatumValue across different columns.
-          native_cell_metas_[i] = projected.meta_;
+          const SqlType &type = expr.get_sql_type();
+          if (datum.is_present() && type.legacy_meta().is_integer_type()
+              && expr.obj_datum_map_ == OBJ_DATUM_8BYTE_DATA
+              && type.form() == SqlTypeForm::Scalar
+              && type.time_semantics() == SqlTimeSemantics::Unspecified
+              && type.canonical_representation() == DatumRepresentation::Inline64) {
+            // The ordinary integer projection only changes metadata. Keep the
+            // same scalar shape validation without exporting and importing it.
+            if (datum.length() != 0 || datum.reference_flags() != Datum::NoReferenceFlags) {
+              ret = OB_INVALID_ARGUMENT;
+            } else {
+              native_cell_metas_[i] = type.legacy_meta();
+            }
+          } else {
+            ObDatum legacy;
+            DatumValue projected;
+            if (OB_FAIL(expr.get_datum_copy_plan().legacy_view(
+                          datum, legacy, legacy_cell_scratch_ + i * 64, 64))) {
+            } else if (OB_FAIL(ResultRowView::project_value(
+                          legacy, type.legacy_meta(), expr.obj_datum_map_,
+                          native_cell_metas_[i], projected))) {
+            } else {
+              native_cell_metas_[i] = projected.meta_;
+            }
+          }
         }
       }
       if (OB_SUCC(ret)) {

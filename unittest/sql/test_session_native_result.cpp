@@ -61,6 +61,7 @@ public:
 class ScalarResultProducer final : public ObOperator {
 public:
   int calls=0;bool null_first=false;bool null_second=false;
+  bool unsigned_values=false;bool malformed_integer=false;
   ScalarResultProducer(ObExecContext &ctx,const ObOpSpec &spec):ObOperator(ctx,spec,nullptr){}
   int get_next_row() override {
     if(calls++>=2){return OB_ITER_END;}
@@ -68,7 +69,9 @@ public:
     for(int64_t i=0;i<get_spec().output_.count();++i) {
       ObExpr &expr=*get_spec().output_.at(i);Datum &value=expr.locate_expr_datum(ctx);
       if((null_first&&calls==1)||(null_second&&calls==2)){value.set_null();}
+      else if(unsigned_values){value.set_uint(UINT64_MAX-i);}
       else{value.set_int(42+calls+10*i);}
+      if(malformed_integer){value.set_outrow();}
       expr.get_eval_info(ctx).evaluated_=true;
     }
     return OB_SUCCESS;
@@ -112,6 +115,49 @@ TEST(SessionNativeResult,metadata_oom_does_not_advance_or_publish_a_row) {
   EXPECT_EQ(OB_ALLOCATE_MEMORY_FAILED,frame.result.get_next_native_result_row(frame.exec,view));EXPECT_EQ(0,frame.producer.calls);EXPECT_FALSE(view.is_datum_row());
   frame.owner.fail=false;EXPECT_EQ(OB_SUCCESS,frame.result.get_next_native_result_row(frame.exec,view));EXPECT_EQ(1,frame.producer.calls);
 }
+TEST(SessionNativeResult, unsigned_integer_projection_preserves_type_and_null_history)
+{
+  ResultFrame frame;
+  frame.expr.obj_meta_.set_uint64();
+  frame.expr.datum_meta_.type_ = ObUInt64Type;
+  ASSERT_EQ(OB_SUCCESS, frame.expr.prepare_scalar_type(
+      frame.expr.obj_meta_, ObAccuracy(20, 7), frame.owner));
+  frame.producer.unsigned_values = true;
+  frame.producer.null_second = true;
+  ResultRowView view;
+  DatumValue value;
+  ASSERT_EQ(OB_SUCCESS, frame.result.get_next_native_result_row(frame.exec, view));
+  ASSERT_EQ(OB_SUCCESS, view.get_value(0, value));
+  EXPECT_EQ(ObUInt64Type, value.get_type());
+  EXPECT_EQ(UINT64_MAX, value.get_uint64());
+  EXPECT_EQ(7, value.get_scale());
+  ASSERT_EQ(OB_SUCCESS, frame.result.get_next_native_result_row(frame.exec, view));
+  ASSERT_EQ(OB_SUCCESS, view.get_value(0, value));
+  EXPECT_TRUE(value.is_null());
+  EXPECT_EQ(7, value.get_scale());
+  EXPECT_EQ(CS_TYPE_BINARY, value.get_collation_type());
+}
+
+TEST(SessionNativeResult, malformed_integer_fails_before_publishing_a_result_view)
+{
+  ResultFrame frame;
+  frame.producer.malformed_integer = true;
+  ResultRowView view;
+  EXPECT_EQ(OB_INVALID_ARGUMENT, frame.result.get_next_native_result_row(frame.exec, view));
+  EXPECT_FALSE(view.is_datum_row());
+  EXPECT_EQ(1, frame.producer.calls);
+}
+
+TEST(SessionNativeResult, invalid_integer_mapping_fails_before_publishing_a_result_view)
+{
+  ResultFrame frame;
+  frame.expr.obj_datum_map_ = OBJ_DATUM_MAPPING_MAX;
+  ResultRowView view;
+  EXPECT_EQ(OB_ERR_UNEXPECTED, frame.result.get_next_native_result_row(frame.exec, view));
+  EXPECT_FALSE(view.is_datum_row());
+  EXPECT_EQ(1, frame.producer.calls);
+}
+
 TEST(SessionNativeResult,first_null_uses_initial_column_metadata_and_rebinding_resets_history) {
   ResultFrame frame;
   frame.producer.null_first = true;
