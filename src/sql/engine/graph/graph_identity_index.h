@@ -17,6 +17,7 @@
 #pragma once
 
 #include "lib/container/ob_array.h"
+#include "lib/container/ob_2d_array.h"
 #include "sql/engine/graph/graph_path_spec.h"
 
 namespace oceanbase
@@ -50,9 +51,9 @@ public:
   int64_t used_memory() const
   {
     return bucket_heads_.get_data_size()
-               > INT64_MAX - entries_.get_data_size()
+               > INT64_MAX - entries_.mem_used()
         ? INT64_MAX
-        : bucket_heads_.get_data_size() + entries_.get_data_size();
+        : bucket_heads_.get_data_size() + entries_.mem_used();
   }
 
 private:
@@ -76,7 +77,10 @@ private:
 
 private:
   common::ObArray<int64_t> bucket_heads_;
-  common::ObArray<Entry> entries_;
+  // Logical positions and hash-chain links stay stable without copying all
+  // entries on growth. Normal-size segments also bound unused tail capacity.
+  // The shared allocator charges the segment directory as well as the blocks.
+  common::ObSegmentArray<Entry, common::OB_MALLOC_NORMAL_BLOCK_SIZE> entries_;
 
   DISALLOW_COPY_AND_ASSIGN(GraphIdentityIndex);
 };

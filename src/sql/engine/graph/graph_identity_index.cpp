@@ -28,8 +28,7 @@ namespace sql
 GraphIdentityIndex::GraphIdentityIndex(ObIAllocator &allocator)
     : bucket_heads_(OB_MALLOC_NORMAL_BLOCK_SIZE,
                     ModulePageAllocator(allocator, "GraphIdIndex")),
-      entries_(OB_MALLOC_NORMAL_BLOCK_SIZE,
-               ModulePageAllocator(allocator, "GraphIdIndex"))
+      entries_(ModulePageAllocator(allocator, "GraphIdIndex"))
 {
 }
 

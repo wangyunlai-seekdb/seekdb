@@ -34,19 +34,21 @@ namespace sql
 class GraphPathStateStore final
 {
 public:
+  enum class Retention : uint8_t { HISTORY, ENDPOINTS };
   GraphPathStateStore(common::ObIAllocator &allocator, int64_t memory_limit);
   ~GraphPathStateStore() = default;
 
   // Creates the zero-hop state for one seed/outer binding. Duplicate seeds are
-  // deliberately assigned different states to preserve bag multiplicity.
+  // deliberately assigned different states to preserve bag multiplicity. The
+  // first root fixes retention until reset(); later roots must use that policy.
   int add_root(int64_t binding_id,
                const GraphElementIdentity &source_identity,
-               int64_t &path_state_id);
+               int64_t &path_state_id,
+               Retention retention = Retention::HISTORY);
 
   // GraphExpandOutput::path_state_id_ names the parent prefix. This method
   // validates that association, inherits its binding and creates the child.
-  int add_child(const GraphExpandOutput &extension, int64_t &path_state_id,
-                bool retain_history = true);
+  int add_child(const GraphExpandOutput &extension, int64_t &path_state_id);
   // After a complete endpoint-only shortest BFS level, the previous level is
   // no longer needed as a parent. Keep the roots and the new frontier in
   // place, rewriting its transient state IDs before the next expansion.
@@ -73,13 +75,24 @@ public:
                     bool &contains) const;
 
   void reset();
-  int64_t count() const { return states_.count(); }
+  int64_t count() const
+  { return retention_ == Retention::HISTORY ? states_.count() : endpoints_.count(); }
   int64_t root_count() const { return root_state_count_; }
-  bool empty() const { return states_.empty(); }
+  bool empty() const { return count() == 0; }
   int64_t used_memory() const;
   int64_t peak_memory() const { return peak_memory_bytes_; }
 
 private:
+  // Self ID is the array position. Endpoint consumers need neither ancestry
+  // nor edge identity/payload; materialize the public GraphPathState on read.
+  struct EndpointState
+  {
+    int64_t binding_id_{0};
+    int64_t root_path_state_id_{GRAPH_INVALID_PATH_STATE_ID};
+    int64_t hop_{0};
+    GraphElementIdentity current_identity_{};
+    TO_STRING_KV(K_(binding_id), K_(root_path_state_id), K_(hop), K_(current_identity));
+  };
   int deep_copy_identity(const GraphElementIdentity &source,
                          GraphElementIdentity &destination);
   int retain_payload(const GraphEdgePayload &source, GraphEdgePayload &destination);
@@ -94,6 +107,10 @@ private:
   // Keep state IDs as logical indexes without requiring one contiguous buffer
   // to be reallocated and copied as the frontier grows.
   common::ObSegmentArray<GraphPathState> states_;
+  common::ObSegmentArray<EndpointState> endpoints_;
+  // The first root selects storage before any records are allocated. Only
+  // one array is populated until reset(); children cannot change the policy.
+  Retention retention_{Retention::HISTORY};
   int64_t root_state_count_{0};
   int64_t peak_memory_bytes_{0};
 

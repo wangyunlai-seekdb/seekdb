@@ -110,7 +110,9 @@ int GraphFeedbackFrontier::add_seed(
     LOG_WARN("invalid graph frontier seed state", K(ret), K_(hop),
              K_(input_batch_size), K_(memory_limit));
   } else if (OB_FAIL(state_store_.add_root(binding_id, source_identity,
-                                            path_state_id))) {
+                                            path_state_id,
+                   retain_path_history_ ? GraphPathStateStore::Retention::HISTORY
+                                        : GraphPathStateStore::Retention::ENDPOINTS))) {
     LOG_WARN("failed to add graph frontier seed", K(ret), K(binding_id));
   } else if (OB_FAIL(current_state_ids_->push_back(path_state_id))) {
     LOG_WARN("failed to append graph frontier state id", K(ret),
@@ -241,7 +243,7 @@ int GraphFeedbackFrontier::save_extension(
   int64_t child_state_id = GRAPH_INVALID_PATH_STATE_ID;
   GraphPathState child;
   bool inserted = false;
-  if (OB_FAIL(state_store_.add_child(extension, child_state_id, retain_path_history_))) {
+  if (OB_FAIL(state_store_.add_child(extension, child_state_id))) {
     LOG_WARN("failed to add graph frontier child", K(ret), K(extension));
   } else if (OB_FAIL(next_state_ids_->push_back(child_state_id))) {
     LOG_WARN("failed to append next graph frontier state", K(ret),

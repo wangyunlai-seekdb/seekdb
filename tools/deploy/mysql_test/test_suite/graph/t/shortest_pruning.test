@@ -62,3 +62,38 @@ SELECT * FROM GRAPH_TABLE(gsp_c MATCH ANY SHORTEST (a IS v)-[e IS e]-{2,8}(b IS 
  COLUMNS(a.k AS seed,b.k AS endpoint,COUNT(e.id) AS hops)) g ORDER BY seed,endpoint;
 DROP PROPERTY GRAPH gsp_c;
 DROP TABLE gsp_ce,gsp_cv;
+--echo compact_endpoints_segment_growth_and_late_duplicate_sources
+CREATE TABLE gsm_d(n INT PRIMARY KEY);
+INSERT INTO gsm_d VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9);
+CREATE TABLE gsm_v(id INT PRIMARY KEY);
+INSERT INTO gsm_v SELECT a.n+10*b.n+100*c.n+1000*d.n+10000*e.n
+ FROM gsm_d a,gsm_d b,gsm_d c,gsm_d d,gsm_d e
+ WHERE a.n+10*b.n+100*c.n+1000*d.n+10000*e.n<=16400;
+CREATE TABLE gsm_e(id INT PRIMARY KEY,src INT,dst INT);
+INSERT INTO gsm_e SELECT id,0,id FROM gsm_v WHERE id BETWEEN 1 AND 8200;
+# The first 8192 inputs are unique; only the last eight repeat a source in
+# hop three. This exercises late promotion without losing any WALK bindings.
+INSERT INTO gsm_e SELECT 8200+id,id,8200+IF(id<=8192,id,1)
+ FROM gsm_v WHERE id BETWEEN 1 AND 8200;
+INSERT INTO gsm_e SELECT 16400+id,id,0 FROM gsm_v WHERE id BETWEEN 8201 AND 16392;
+CREATE PROPERTY GRAPH gsm VERTEX TABLES(gsm_v KEY(id) LABEL v PROPERTIES(id))
+ EDGE TABLES(gsm_e KEY(id) SOURCE KEY(src) REFERENCES gsm_v(id)
+ DESTINATION KEY(dst) REFERENCES gsm_v(id) LABEL e PROPERTIES(id));
+--let $gsm_passes=2
+while ($gsm_passes)
+{
+  if ($gsm_passes == 1)
+  {
+    CREATE INDEX gsm_out ON gsm_e(src,dst);
+  }
+  SELECT COUNT(*) AS endpoints,MIN(hops) AS min_hops,MAX(hops) AS max_hops
+  FROM GRAPH_TABLE(gsm MATCH ANY SHORTEST
+   (a IS v WHERE a.id=0)-[e IS e]->{0,3}(b IS v)
+   COLUMNS(b.id AS endpoint,COUNT(e.id) AS hops)) g;
+  SELECT hops,COUNT(*) AS paths FROM GRAPH_TABLE(gsm MATCH
+   (a IS v WHERE a.id=0)-[e IS e]->{2,3}(b IS v)
+   COLUMNS(b.id AS endpoint,COUNT(e.id) AS hops)) g GROUP BY hops ORDER BY hops;
+  --dec $gsm_passes
+}
+DROP PROPERTY GRAPH gsm;
+DROP TABLE gsm_e,gsm_v,gsm_d;

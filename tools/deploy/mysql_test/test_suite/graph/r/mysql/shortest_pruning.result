@@ -42,3 +42,14 @@ seed	endpoint	hops
 3.75	1.25	2
 3.75	2.50	3
 3.75	3.75	2
+compact_endpoints_segment_growth_and_late_duplicate_sources
+endpoints	min_hops	max_hops
+16393	0	2
+hops	paths
+2	8200
+3	8200
+endpoints	min_hops	max_hops
+16393	0	2
+hops	paths
+2	8200
+3	8200

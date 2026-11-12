@@ -39,6 +39,8 @@ public:
   void reset();
   int64_t used_memory() const;
   bool grouped() const { return source_input_groups_enabled_; }
+  int64_t association_bytes_per_input() const
+  { return source_input_groups_.empty() ? 0 : sizeof(SourceInputGroup) + sizeof(int64_t); }
   const common::ObIArray<GraphElementIdentity> &sources() const { return source_identities_; }
   int find_source(const GraphElementIdentity &identity, int64_t &index, bool &found) const
   { return source_input_index_.find(identity, index, found); }
@@ -53,6 +55,7 @@ private:
   int deep_copy_inputs(const common::ObIArray<GraphExpandInput> &inputs);
   int validate_input_keys(const common::ObIArray<GraphExpandInput> &inputs);
   int build_source_input_groups();
+  int promote_source_input_groups(int64_t unique_prefix_count);
   int start_edge_input_group(const GraphElementIdentity &source);
   bool contains(const common::ObIArray<GraphElementIdentity> &identities,
                 const GraphElementIdentity &identity) const;
