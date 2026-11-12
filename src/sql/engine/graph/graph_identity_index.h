@@ -17,6 +17,8 @@
 #pragma once
 
 #include "lib/container/ob_array.h"
+#include "lib/container/ob_2d_array.h"
+#include "lib/allocator/page_arena.h"
 #include "sql/engine/graph/graph_path_spec.h"
 
 namespace oceanbase
@@ -26,16 +28,21 @@ namespace sql
 // Query-local hash index over typed graph identities. Compatible NUMBER and
 // DECIMAL_INT keys are normalized, while tolerance-compared DOUBLE keys use a
 // type bucket, so bucket selection follows graph endpoint equality. Identities
-// are shallow views: the caller must keep their rowkey backing alive until
-// reset(). An optional binding ID separates correlation domains without
-// changing element identity. Both arrays use the owner's graph work area.
+// are shallow views in BORROWED mode: the caller keeps rowkey backing alive
+// until reset(). OWNED_ENDPOINTS retains exact accepted identities and exposes
+// only currently marked membership to find(). An optional binding ID separates
+// correlation domains without changing element identity. All allocations use
+// the owner's graph work area.
 class GraphIdentityIndex final
 {
 public:
-  explicit GraphIdentityIndex(common::ObIAllocator &allocator);
+  enum class Ownership : uint8_t { BORROWED, OWNED_ENDPOINTS };
+  explicit GraphIdentityIndex(common::ObIAllocator &allocator,
+                              Ownership ownership = Ownership::BORROWED);
   ~GraphIdentityIndex() = default;
 
   int init(int64_t expected_count);
+  // Borrowed mode insertion. The caller owns immutable rowkey backing.
   int get_or_insert(const GraphElementIdentity &identity,
                     int64_t &entry_index,
                     bool &inserted,
@@ -44,16 +51,19 @@ public:
            int64_t &entry_index,
            bool &found,
            int64_t binding_id = 0) const;
+  // Owned-only: retain the exact occurrence, initially absent from find().
+  // Never replace an identity with a tolerance-equal DOUBLE representative.
+  int retain_identity(const GraphElementIdentity &identity, int64_t binding_id,
+                       int64_t &handle);
+  int get_identity(int64_t handle, GraphElementIdentity &identity,
+                    int64_t &binding_id) const;
+  int mark_present(int64_t handle);
+  // Clears eligible membership without invalidating owned identities/handles.
+  int clear_membership();
   void reset();
   int64_t count() const { return entries_.count(); }
   static int64_t entry_size() { return sizeof(Entry); }
-  int64_t used_memory() const
-  {
-    return bucket_heads_.get_data_size()
-               > INT64_MAX - entries_.get_data_size()
-        ? INT64_MAX
-        : bucket_heads_.get_data_size() + entries_.get_data_size();
-  }
+  int64_t used_memory() const;
 
 private:
   struct Entry
@@ -75,8 +85,19 @@ private:
   int grow_buckets();
 
 private:
-  common::ObArray<int64_t> bucket_heads_;
-  common::ObArray<Entry> entries_;
+  // Rehash changes logical bucket positions, not their physical storage.
+  // Growing appends bounded blocks instead of duplicating a large buffer.
+  common::ObSegmentArray<int64_t, common::OB_MALLOC_NORMAL_BLOCK_SIZE> bucket_heads_;
+  // Logical positions and hash-chain links stay stable without copying all
+  // entries on growth. Normal-size segments also bound unused tail capacity.
+  // The shared allocator charges the segment directory as well as the blocks.
+  common::ObSegmentArray<Entry, common::OB_MALLOC_NORMAL_BLOCK_SIZE> entries_;
+  // Only the endpoint owner populates these. Borrowing index users retain the
+  // same Entry layout and allocate neither key copies nor membership bytes.
+  common::ObSegmentArray<uint8_t, common::OB_MALLOC_NORMAL_BLOCK_SIZE> membership_epochs_;
+  common::ObArenaAllocator identity_allocator_;
+  Ownership ownership_{Ownership::BORROWED};
+  uint8_t current_epoch_{1};
 
   DISALLOW_COPY_AND_ASSIGN(GraphIdentityIndex);
 };

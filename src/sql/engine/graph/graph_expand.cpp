@@ -273,7 +273,8 @@ int GraphExpand::validate_lookup_result(
   return ret;
 }
 
-int GraphExpand::validate_and_account(const ObIArray<GraphExpandInput> &inputs)
+int GraphExpand::validate_and_account(const ObIArray<GraphExpandInput> &inputs,
+                                       int64_t association_bytes_per_input)
 {
   int ret = OB_SUCCESS;
   int64_t bytes = 0;
@@ -289,20 +290,18 @@ int GraphExpand::validate_and_account(const ObIArray<GraphExpandInput> &inputs)
     }
   }
   if (OB_SUCC(ret)) {
-    // Reserve the worst case of one distinct source per input: one identity
-    // index entry/bucket, one group descriptor and one next-input link.
+    // Preflight common structures first. After input initialization, reserve
+    // group/link bytes only if duplicate sources actually required them.
     const int64_t source_index_entry_bytes =
         GraphIdentityIndex::entry_size();
     const int64_t source_index_bucket_bytes = sizeof(int64_t);
     const int64_t existing_source_index_bytes =
         source_index_entry_bytes + source_index_bucket_bytes;
-    const int64_t source_input_group_bytes =
-        3 * sizeof(int64_t);
     const int64_t per_input = sizeof(GraphExpandInput)
         + 2 * sizeof(GraphElementIdentity)
         + source_index_entry_bytes + source_index_bucket_bytes
         + existing_source_index_bytes
-        + source_input_group_bytes
+        + association_bytes_per_input
         + GRAPH_EXPAND_INPUT_MEMORY_RESERVE_BYTES;
     const int64_t per_edge = sizeof(GraphExpandEdge) + 2 * sizeof(GraphElementIdentity)
         + 2 * (source_index_entry_bytes + source_index_bucket_bytes) + sizeof(uint8_t)
@@ -364,9 +363,11 @@ int GraphExpand::open(const ObIArray<GraphExpandInput> &inputs,
     ret = OB_INVALID_ARGUMENT;
   } else if (known_visited != nullptr && inputs.empty()) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(validate_and_account(inputs))) {
+  } else if (OB_FAIL(validate_and_account(inputs, 0))) {
   } else if (OB_FAIL(access_.check_status())) {
   } else if (OB_FAIL(input_bindings_.init(inputs))) {
+  } else if (OB_FAIL(validate_and_account(
+                 inputs, input_bindings_.association_bytes_per_input()))) {
   } else if (access_.can_partition_sources()
              && input_bindings_.sources().count() > GRAPH_EXPAND_MAX_SOURCE_BATCH_SIZE) {
     // Bound physical ranges, not the number of associated path/seed bindings.

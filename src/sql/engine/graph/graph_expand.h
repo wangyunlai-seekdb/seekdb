@@ -165,7 +165,8 @@ public:
 
 private:
   int load_next_page();
-  int validate_and_account(const common::ObIArray<GraphExpandInput> &inputs);
+  int validate_and_account(const common::ObIArray<GraphExpandInput> &inputs,
+                            int64_t association_bytes_per_input);
   int lookup_source_vertices();
   int build_existing_source_index();
   bool contains(const common::ObIArray<GraphElementIdentity> &identities,

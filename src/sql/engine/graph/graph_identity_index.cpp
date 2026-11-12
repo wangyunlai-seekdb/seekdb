@@ -25,11 +25,11 @@ namespace oceanbase
 using namespace common;
 namespace sql
 {
-GraphIdentityIndex::GraphIdentityIndex(ObIAllocator &allocator)
-    : bucket_heads_(OB_MALLOC_NORMAL_BLOCK_SIZE,
-                    ModulePageAllocator(allocator, "GraphIdIndex")),
-      entries_(OB_MALLOC_NORMAL_BLOCK_SIZE,
-               ModulePageAllocator(allocator, "GraphIdIndex"))
+GraphIdentityIndex::GraphIdentityIndex(ObIAllocator &allocator, Ownership ownership)
+    : bucket_heads_(ModulePageAllocator(allocator, "GraphIdIndex")),
+      entries_(ModulePageAllocator(allocator, "GraphIdIndex")),
+      membership_epochs_(ModulePageAllocator(allocator, "GraphIdIndex")),
+      identity_allocator_(allocator), ownership_(ownership)
 {
 }
 
@@ -155,7 +155,9 @@ int GraphIdentityIndex::find_in_bucket(const GraphElementIdentity &identity,
         ret = OB_ERR_UNEXPECTED;
         LOG_WARN("corrupted graph identity hash chain", K(ret), K(current),
                  K(visited), "entry_count", entries_.count());
-      } else if (entries_.at(current).hash_ == hash
+      } else if ((ownership_ == Ownership::BORROWED
+                  || membership_epochs_.at(current) == current_epoch_)
+                 && entries_.at(current).hash_ == hash
                  && entries_.at(current).binding_id_ == binding_id
                  && entries_.at(current).identity_ == identity) {
         entry_index = current;
@@ -179,7 +181,9 @@ int GraphIdentityIndex::get_or_insert(
   uint64_t hash = 0;
   entry_index = -1;
   inserted = false;
-  if (OB_FAIL(get_hash(identity, hash, binding_id))) {
+  if (OB_UNLIKELY(ownership_ != Ownership::BORROWED)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(get_hash(identity, hash, binding_id))) {
   } else if (OB_FAIL(find_in_bucket(identity, hash, binding_id, entry_index, found))) {
   } else if (found) {
   } else if (OB_FAIL(grow_buckets())) {
@@ -232,6 +236,95 @@ void GraphIdentityIndex::reset()
 {
   bucket_heads_.reset();
   entries_.reset();
+  membership_epochs_.reset();
+  identity_allocator_.reset();
+  current_epoch_ = 1;
+}
+
+int64_t GraphIdentityIndex::used_memory() const
+{
+  int64_t used = 0;
+  const int64_t parts[] = {bucket_heads_.mem_used(), entries_.mem_used(),
+      membership_epochs_.mem_used(), identity_allocator_.total()};
+  for (int64_t part : parts) {
+    if (part < 0 || used > INT64_MAX - part) { return INT64_MAX; }
+    used += part;
+  }
+  return used;
+}
+
+int GraphIdentityIndex::retain_identity(const GraphElementIdentity &identity,
+                                        int64_t binding_id, int64_t &handle)
+{
+  int ret = OB_SUCCESS;
+  uint64_t hash = 0;
+  Entry entry;
+  handle = -1;
+  if (OB_UNLIKELY(ownership_ != Ownership::OWNED_ENDPOINTS || binding_id < 0)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (bucket_heads_.empty() && OB_FAIL(init(1))) {
+  } else if (OB_FAIL(get_hash(identity, hash, binding_id))) {
+  } else if (OB_FAIL(grow_buckets())) {
+  } else if (OB_FAIL(identity.rowkey_.deep_copy(entry.identity_.rowkey_, identity_allocator_))) {
+  } else {
+    entry.identity_.graph_id_ = identity.graph_id_;
+    entry.identity_.element_id_ = identity.element_id_;
+    entry.binding_id_ = binding_id;
+    entry.hash_ = hash;
+    const int64_t bucket = hash % bucket_heads_.count();
+    entry.next_entry_ = bucket_heads_.at(bucket);
+    if (OB_FAIL(entries_.push_back(entry))) {
+    } else if (OB_FAIL(membership_epochs_.push_back(0))) {
+    } else {
+      handle = entries_.count() - 1;
+      bucket_heads_.at(bucket) = handle;
+    }
+  }
+  // Allocation errors are terminal to the owner; never leave a partial entry
+  // whose membership byte could be read by a subsequent probe.
+  if (OB_FAIL(ret)) { reset(); }
+  return ret;
+}
+
+int GraphIdentityIndex::get_identity(int64_t handle, GraphElementIdentity &identity,
+                                     int64_t &binding_id) const
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(ownership_ != Ownership::OWNED_ENDPOINTS
+                  || handle < 0 || handle >= entries_.count())) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    identity = entries_.at(handle).identity_;
+    binding_id = entries_.at(handle).binding_id_;
+  }
+  return ret;
+}
+
+int GraphIdentityIndex::mark_present(int64_t handle)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(ownership_ != Ownership::OWNED_ENDPOINTS
+                  || handle < 0 || handle >= membership_epochs_.count())) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    membership_epochs_.at(handle) = current_epoch_;
+  }
+  return ret;
+}
+
+int GraphIdentityIndex::clear_membership()
+{
+  static_assert(2 * GRAPH_PATH_MAX_HOPS + 2 < UINT8_MAX,
+                "one membership epoch per bounded BFS transition must fit");
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(ownership_ != Ownership::OWNED_ENDPOINTS)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_UNLIKELY(current_epoch_ == UINT8_MAX)) {
+    ret = OB_SIZE_OVERFLOW;
+  } else {
+    ++current_epoch_;
+  }
+  return ret;
 }
 
 

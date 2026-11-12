@@ -36,7 +36,11 @@ public:
                         int64_t input_batch_size,
                         int64_t memory_limit);
   ~GraphFeedbackFrontier() = default;
-  void set_retain_path_history(bool retain) { retain_path_history_ = retain; }
+  void set_state_retention(GraphPathStateStore::Retention retention)
+  {
+    state_retention_ = retention;
+    retain_path_history_ = retention == GraphPathStateStore::Retention::HISTORY;
+  }
 
   // Seeds may only be added to the zero-hop frontier. Duplicate seed rows are
   // intentionally assigned independent path states to preserve bag semantics.
@@ -100,13 +104,19 @@ private:
                           GraphPathMode path_mode,
                           bool prune_duplicate_states,
                           int64_t output_end);
-  const common::ObIArray<int64_t> &output_state_ids() const
+  const GraphFrontierStateIds &output_state_ids() const
   { return expanding_ ? *next_state_ids_ : *current_state_ids_; }
   // Both budget calculation and post-access checks use the same allocation list.
   int get_memory_usage(bool include_input_batch, int64_t &used) const;
   int64_t batch_memory_budget() const;
   int check_memory_limit();
   int fail(int error);
+  bool shares_endpoint_identities() const
+  { return state_retention_ == GraphPathStateStore::Retention::INDEXED_ENDPOINTS; }
+  GraphIdentityIndex &visited_index()
+  { return shares_endpoint_identities() ? state_store_.endpoint_index() : next_state_index_; }
+  const GraphIdentityIndex &visited_index() const
+  { return shares_endpoint_identities() ? state_store_.endpoint_index() : next_state_index_; }
 
 private:
   GraphExpand &expand_;
@@ -119,10 +129,10 @@ private:
   GraphIdentityIndex next_state_index_;
   int64_t input_batch_size_;
   int64_t memory_limit_;
-  common::ObArray<int64_t> frontier_buffer_a_;
-  common::ObArray<int64_t> frontier_buffer_b_;
-  common::ObArray<int64_t> *current_state_ids_{&frontier_buffer_a_};
-  common::ObArray<int64_t> *next_state_ids_{&frontier_buffer_b_};
+  GraphFrontierStateIds frontier_buffer_a_;
+  GraphFrontierStateIds frontier_buffer_b_;
+  GraphFrontierStateIds *current_state_ids_{&frontier_buffer_a_};
+  GraphFrontierStateIds *next_state_ids_{&frontier_buffer_b_};
   common::ObArray<GraphPathState> path_buffer_;
   int64_t hop_{0};
   int64_t peak_memory_bytes_{0};
@@ -135,6 +145,7 @@ private:
   bool expanding_{false};
   bool batch_open_{false};
   bool retain_path_history_{true};
+  GraphPathStateStore::Retention state_retention_{GraphPathStateStore::Retention::HISTORY};
 
   DISALLOW_COPY_AND_ASSIGN(GraphFeedbackFrontier);
 };

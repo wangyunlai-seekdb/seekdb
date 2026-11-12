@@ -35,10 +35,8 @@ GraphFeedbackFrontier::GraphFeedbackFrontier(ObIAllocator &allocator,
       next_state_index_(allocator),
       input_batch_size_(input_batch_size),
       memory_limit_(memory_limit),
-      frontier_buffer_a_(OB_MALLOC_NORMAL_BLOCK_SIZE,
-                         ModulePageAllocator(allocator, "GraphFrontier")),
-      frontier_buffer_b_(OB_MALLOC_NORMAL_BLOCK_SIZE,
-                         ModulePageAllocator(allocator, "GraphFrontier")),
+      frontier_buffer_a_(ModulePageAllocator(allocator, "GraphFrontier")),
+      frontier_buffer_b_(ModulePageAllocator(allocator, "GraphFrontier")),
       path_buffer_(OB_MALLOC_NORMAL_BLOCK_SIZE,
                    ModulePageAllocator(allocator, "GraphPathResult"))
 {
@@ -49,8 +47,8 @@ int GraphFeedbackFrontier::get_memory_usage(bool include_input_batch, int64_t &u
   int ret = OB_SUCCESS;
   used = 0;
   const int64_t parts[] = {
-      state_store_.used_memory(), frontier_buffer_a_.get_data_size(),
-      frontier_buffer_b_.get_data_size(), path_buffer_.get_data_size(),
+      state_store_.used_memory(), frontier_buffer_a_.mem_used(),
+      frontier_buffer_b_.mem_used(), path_buffer_.get_data_size(),
       next_state_index_.used_memory(), expand_.used_memory(),
       include_input_batch ? input_batcher_.used_memory() : 0};
   for (int64_t part : parts) {
@@ -110,7 +108,7 @@ int GraphFeedbackFrontier::add_seed(
     LOG_WARN("invalid graph frontier seed state", K(ret), K_(hop),
              K_(input_batch_size), K_(memory_limit));
   } else if (OB_FAIL(state_store_.add_root(binding_id, source_identity,
-                                            path_state_id))) {
+                                            path_state_id, state_retention_))) {
     LOG_WARN("failed to add graph frontier seed", K(ret), K(binding_id));
   } else if (OB_FAIL(current_state_ids_->push_back(path_state_id))) {
     LOG_WARN("failed to append graph frontier state id", K(ret),
@@ -132,8 +130,15 @@ int GraphFeedbackFrontier::begin_hop(
       && hop_ > 0
       && next_hop > shortest_lower_bound_;
   next_state_ids_->reuse();
-  if (!retain_seen) { next_state_index_.reset(); }
-  if (OB_UNLIKELY(!retain_path_history_ && path_mode != GraphPathMode::WALK)) {
+  if (!retain_seen) {
+    if (shares_endpoint_identities()) {
+      ret = visited_index().clear_membership();
+    } else {
+      next_state_index_.reset();
+    }
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_UNLIKELY(!retain_path_history_ && path_mode != GraphPathMode::WALK)) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("graph path mode requires retained history", K(ret), K(path_mode));
   } else if (OB_FAIL(input_batcher_.begin_level(
@@ -146,7 +151,7 @@ int GraphFeedbackFrontier::begin_hop(
     hop_stats_.begin(current_state_ids_->count(), input_batcher_.has_exact_source_count()
         || !expand_.can_partition_sources() || current_state_ids_->count() <= input_batch_size_);
   }
-  if (OB_SUCC(ret) && prune_duplicate_states && !retain_seen
+  if (OB_SUCC(ret) && prune_duplicate_states && !retain_seen && !shares_endpoint_identities()
              && OB_FAIL(next_state_index_.init(current_state_ids_->count()))) {
   }
   // A zero-hop result dominates every later return to the same seed. For a
@@ -159,7 +164,9 @@ int GraphFeedbackFrontier::begin_hop(
     int64_t entry_index = -1;
     bool inserted = false;
     if (OB_FAIL(state_store_.get_state(current_state_ids_->at(i), root))) {
-    } else if (OB_FAIL(next_state_index_.get_or_insert(
+    } else if (shares_endpoint_identities()
+               && OB_FAIL(state_store_.mark_endpoint_seen(current_state_ids_->at(i)))) {
+    } else if (!shares_endpoint_identities() && OB_FAIL(next_state_index_.get_or_insert(
                    root.current_identity_, entry_index, inserted, root.binding_id_))) {
       LOG_WARN("failed to index zero-hop graph state", K(ret), K(i));
     }
@@ -199,7 +206,8 @@ int GraphFeedbackFrontier::finish_hop()
     }
     // The first eligible level establishes the shortest depth of each
     // binding/vertex. Keep its index for later levels only in that mode.
-    if (!(active_prune_duplicate_states_ && shortest_lower_bound_ >= 0
+    if (!shares_endpoint_identities()
+        && !(active_prune_duplicate_states_ && shortest_lower_bound_ >= 0
           && hop_ >= shortest_lower_bound_)) {
       next_state_index_.reset();
     }
@@ -224,7 +232,7 @@ int GraphFeedbackFrontier::accept_extension(
           extension.path_state_id_, extension.edge_identity_, repeated_edge))) {
     LOG_WARN("failed to inspect graph path edge history", K(ret), K(extension));
   } else if (prune_duplicate_states
-             && OB_FAIL(next_state_index_.find(extension.target_identity_,
+             && OB_FAIL(visited_index().find(extension.target_identity_,
                  entry_index, repeated_state, extension.binding_id_))) {
     LOG_WARN("failed to probe reachable graph state", K(ret));
   } else {
@@ -241,14 +249,16 @@ int GraphFeedbackFrontier::save_extension(
   int64_t child_state_id = GRAPH_INVALID_PATH_STATE_ID;
   GraphPathState child;
   bool inserted = false;
-  if (OB_FAIL(state_store_.add_child(extension, child_state_id, retain_path_history_))) {
+  if (OB_FAIL(state_store_.add_child(extension, child_state_id))) {
     LOG_WARN("failed to add graph frontier child", K(ret), K(extension));
   } else if (OB_FAIL(next_state_ids_->push_back(child_state_id))) {
     LOG_WARN("failed to append next graph frontier state", K(ret),
              K(child_state_id));
-  } else if (prune_duplicate_states
+  } else if (prune_duplicate_states && shares_endpoint_identities()
+             && OB_FAIL(state_store_.mark_endpoint_seen(child_state_id))) {
+  } else if (prune_duplicate_states && !shares_endpoint_identities()
              && OB_FAIL(state_store_.get_state(child_state_id, child))) {
-  } else if (prune_duplicate_states
+  } else if (prune_duplicate_states && !shares_endpoint_identities()
              && OB_FAIL(next_state_index_.get_or_insert(
                  child.current_identity_, entry_index, inserted, child.binding_id_))) {
     // Index the stable state-store copy, never the reusable DAS page.
@@ -273,7 +283,7 @@ int GraphFeedbackFrontier::consume_input_batch(
     const GraphIdentityIndex *known_visited =
         shortest_lower_bound_ >= 0 && prune_duplicate_states
         && path_mode == GraphPathMode::WALK && !retain_path_history_
-        && state_store_.root_count() == 1 ? &next_state_index_ : nullptr;
+        && state_store_.root_count() == 1 ? &visited_index() : nullptr;
     if (OB_FAIL(expand_.rescan(input_batcher_.batch(), direction, known_visited))) {
       LOG_WARN("failed to open graph expand for frontier batch", K(ret),
                "input_count", input_batcher_.batch().count());

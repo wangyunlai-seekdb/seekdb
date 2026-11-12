@@ -76,8 +76,11 @@ int GraphExpandInputBindings::next_input(
     } else {
       const int64_t current = input_index_;
       if (source_input_groups_enabled_) {
-        if (OB_UNLIKELY(current >= next_input_indices_.count()
-                        || !(inputs_.at(current).source_identity_ == source))) {
+        if (OB_UNLIKELY(!(inputs_.at(current).source_identity_ == source))) {
+          ret = OB_ERR_UNEXPECTED;
+        } else if (source_input_groups_.empty()) {
+          input_index_ = -1;
+        } else if (OB_UNLIKELY(current >= next_input_indices_.count())) {
           ret = OB_ERR_UNEXPECTED;
         } else { input_index_ = next_input_indices_.at(current); }
       } else { ++input_index_; }
@@ -223,6 +226,24 @@ int GraphExpandInputBindings::validate_input_keys(
   return ret;
 }
 
+int GraphExpandInputBindings::promote_source_input_groups(int64_t unique_prefix_count)
+{
+  int ret = OB_SUCCESS;
+  // Until the first duplicate, source-entry ordinals equal input ordinals.
+  // Materialize that prefix only when one-to-many associations are needed.
+  for (int64_t i = 0; OB_SUCC(ret) && i < unique_prefix_count; ++i) {
+    SourceInputGroup group;
+    group.first_input_ = i;
+    group.last_input_ = i;
+    if (i % GRAPH_EXPAND_STATUS_CHECK_INTERVAL == 0 && OB_FAIL(access_.check_status())) {
+    } else if (OB_FAIL(source_input_groups_.push_back(group))) {
+    } else if (OB_FAIL(next_input_indices_.push_back(-1))) {
+    }
+  }
+  if (OB_SUCC(ret)) { ret = check_memory_limit(); }
+  return ret;
+}
+
 int GraphExpandInputBindings::build_source_input_groups()
 {
   int ret = OB_SUCCESS;
@@ -265,8 +286,7 @@ int GraphExpandInputBindings::build_source_input_groups()
               inputs_.at(i).source_identity_, group_index, inserted))) {
         LOG_WARN("failed to index graph source input", K(ret), K(i));
       } else if (inserted
-                 && OB_UNLIKELY(group_index != source_input_groups_.count()
-                                || group_index != source_identities_.count())) {
+                 && OB_UNLIKELY(group_index != source_identities_.count())) {
         ret = OB_ERR_UNEXPECTED;
         LOG_WARN("graph source input index is inconsistent", K(ret), K(i),
                  K(group_index), "group_count", source_input_groups_.count(),
@@ -275,32 +295,38 @@ int GraphExpandInputBindings::build_source_input_groups()
                  && OB_FAIL(source_identities_.push_back(
                      inputs_.at(i).source_identity_))) {
         LOG_WARN("failed to append graph source identity", K(ret), K(i));
-      } else if (inserted
-                 && OB_FAIL(source_input_groups_.push_back(SourceInputGroup()))) {
-        LOG_WARN("failed to append graph source input group", K(ret), K(i));
-      } else if (OB_UNLIKELY(group_index < 0
-                             || group_index >= source_input_groups_.count())) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("invalid graph source input group", K(ret), K(i),
-                 K(group_index), "group_count", source_input_groups_.count());
-      } else if (OB_FAIL(next_input_indices_.push_back(-1))) {
-        LOG_WARN("failed to append graph source input link", K(ret), K(i));
       } else {
-        SourceInputGroup &group = source_input_groups_.at(group_index);
-        if (group.last_input_ >= 0) {
-          next_input_indices_.at(group.last_input_) = i;
-        } else {
-          group.first_input_ = i;
+        if (!inserted && source_input_groups_.empty()
+            && OB_FAIL(promote_source_input_groups(i))) {
         }
-        group.last_input_ = i;
+        if (OB_SUCC(ret) && source_input_groups_.empty()) {
+          // Keep the hash lookup: edge order need not follow input order.
+          // No groups or links are necessary for one input per source.
+          if (OB_UNLIKELY(!inserted || group_index != i)) { ret = OB_ERR_UNEXPECTED; }
+        } else if (OB_SUCC(ret)) {
+          if (inserted && OB_FAIL(source_input_groups_.push_back(SourceInputGroup()))) {
+          } else if (OB_UNLIKELY(group_index < 0
+                                 || group_index >= source_input_groups_.count())) {
+            ret = OB_ERR_UNEXPECTED;
+          } else if (OB_FAIL(next_input_indices_.push_back(-1))) {
+          } else {
+            SourceInputGroup &group = source_input_groups_.at(group_index);
+            if (group.last_input_ >= 0) {
+              next_input_indices_.at(group.last_input_) = i;
+            } else {
+              group.first_input_ = i;
+            }
+            group.last_input_ = i;
+          }
+        }
       }
     }
     if (OB_SUCC(ret)
-        && OB_UNLIKELY(source_input_index_.count()
-                           != source_input_groups_.count()
-                       || source_input_groups_.count()
-                           != source_identities_.count()
-                       || next_input_indices_.count() != inputs_.count())) {
+        && OB_UNLIKELY(source_input_index_.count() != source_identities_.count()
+                       || (source_input_groups_.empty()
+                           ? source_identities_.count() != inputs_.count()
+                           : source_input_groups_.count() != source_identities_.count()
+                             || next_input_indices_.count() != inputs_.count()))) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("graph source input groups are incomplete", K(ret),
                "index_count", source_input_index_.count(),
@@ -326,10 +352,13 @@ int GraphExpandInputBindings::start_edge_input_group(const GraphElementIdentity 
                  source, group_index, found))) {
     LOG_WARN("failed to find graph edge input group", K(ret), K(source));
   } else if (OB_UNLIKELY(!found || group_index < 0
-                         || group_index >= source_input_groups_.count())) {
+                         || group_index >= source_identities_.count())) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("graph edge has no source input group", K(ret), K(source),
              K(group_index), K(found));
+  } else if (source_input_groups_.empty()) {
+    input_index_ = group_index;
+    input_group_started_ = true;
   } else {
     const SourceInputGroup &group = source_input_groups_.at(group_index);
     if (OB_UNLIKELY(group.first_input_ < 0

@@ -31,7 +31,10 @@ GraphPathStateStore::GraphPathStateStore(ObIAllocator &allocator,
                                          int64_t memory_limit)
     : identity_allocator_(allocator),
       memory_limit_(memory_limit),
-      states_(ModulePageAllocator(allocator, "GraphPathState"))
+      states_(ModulePageAllocator(allocator, "GraphPathState")),
+      endpoints_(ModulePageAllocator(allocator, "GraphPathState")),
+      indexed_endpoints_(ModulePageAllocator(allocator, "GraphPathState")),
+      endpoint_index_(allocator, GraphIdentityIndex::Ownership::OWNED_ENDPOINTS)
 {
 }
 
@@ -57,7 +60,7 @@ int GraphPathStateStore::deep_copy_identity(
 
 bool GraphPathStateStore::is_valid_state_id(int64_t path_state_id) const
 {
-  return path_state_id >= 0 && path_state_id < states_.count();
+  return path_state_id >= 0 && path_state_id < count();
 }
 
 int64_t GraphPathStateStore::used_memory() const
@@ -65,7 +68,8 @@ int64_t GraphPathStateStore::used_memory() const
   // Count reserved state capacity, not only populated states. mem_used() does
   // not include the segment-pointer array; the shared work-area allocator
   // still charges every allocation against the query's hard memory limit.
-  return states_.mem_used() + identity_allocator_.total();
+  return states_.mem_used() + endpoints_.mem_used() + indexed_endpoints_.mem_used()
+      + endpoint_index_.used_memory() + identity_allocator_.total();
 }
 
 int GraphPathStateStore::check_memory_limit()
@@ -90,20 +94,41 @@ int GraphPathStateStore::append_state(GraphPathState &state,
 {
   int ret = OB_SUCCESS;
   path_state_id = GRAPH_INVALID_PATH_STATE_ID;
-  if (OB_UNLIKELY(states_.count() == INT64_MAX)) {
+  if (OB_UNLIKELY(count() == INT64_MAX)) {
     ret = OB_SIZE_OVERFLOW;
-    LOG_WARN("too many graph path states", K(ret), "count", states_.count());
+    LOG_WARN("too many graph path states", K(ret), "count", count());
   } else {
-    state.path_state_id_ = states_.count();
+    state.path_state_id_ = count();
     if (state.hop_ == 0) { state.root_path_state_id_ = state.path_state_id_; }
     if (OB_UNLIKELY(!state.is_valid())) {
       ret = OB_INVALID_ARGUMENT;
       LOG_WARN("invalid graph path state", K(ret), K(state));
-    } else if (OB_FAIL(states_.push_back(state))) {
-      LOG_WARN("failed to save graph path state", K(ret), K(state));
-    } else if (OB_FAIL(check_memory_limit())) {
     } else {
-      path_state_id = state.path_state_id_;
+      if (retention_ == Retention::HISTORY) {
+        ret = states_.push_back(state);
+      } else if (retention_ == Retention::INDEXED_ENDPOINTS) {
+        IndexedEndpointState endpoint;
+        endpoint.root_path_state_id_ = state.root_path_state_id_;
+        endpoint.hop_ = state.hop_;
+        if (OB_FAIL(endpoint_index_.retain_identity(state.current_identity_,
+                         state.binding_id_, endpoint.identity_handle_))) {
+        } else {
+          ret = indexed_endpoints_.push_back(endpoint);
+        }
+      } else {
+        EndpointState endpoint;
+        endpoint.binding_id_ = state.binding_id_;
+        endpoint.root_path_state_id_ = state.root_path_state_id_;
+        endpoint.hop_ = state.hop_;
+        endpoint.current_identity_ = state.current_identity_;
+        ret = endpoints_.push_back(endpoint);
+      }
+      if (OB_FAIL(ret)) {
+        LOG_WARN("failed to save graph path state", K(ret), K(state));
+      } else if (OB_FAIL(check_memory_limit())) {
+      } else {
+        path_state_id = state.path_state_id_;
+      }
     }
   }
   return ret;
@@ -111,21 +136,31 @@ int GraphPathStateStore::append_state(GraphPathState &state,
 
 int GraphPathStateStore::add_root(int64_t binding_id,
                                   const GraphElementIdentity &source_identity,
-                                  int64_t &path_state_id)
+                                  int64_t &path_state_id,
+                                  Retention retention)
 {
   int ret = OB_SUCCESS;
   GraphPathState state;
   path_state_id = GRAPH_INVALID_PATH_STATE_ID;
   if (OB_UNLIKELY(binding_id < 0 || memory_limit_ <= 0
-                  || !source_identity.is_valid())) {
+                  || !source_identity.is_valid()
+                  || (retention != Retention::HISTORY && retention != Retention::ENDPOINTS
+                      && retention != Retention::INDEXED_ENDPOINTS)
+                  || (!empty() && retention != retention_))) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid graph path root", K(ret), K(binding_id),
              K_(memory_limit), K(source_identity));
   } else {
+    if (empty()) { retention_ = retention; }
     state.binding_id_ = binding_id;
     state.parent_path_state_id_ = GRAPH_INVALID_PATH_STATE_ID;
     state.hop_ = 0;
-    if (OB_FAIL(deep_copy_identity(source_identity, state.current_identity_))) {
+    if (retention_ == Retention::INDEXED_ENDPOINTS) {
+      state.current_identity_ = source_identity; // append_state owns the exact key.
+    } else {
+      ret = deep_copy_identity(source_identity, state.current_identity_);
+    }
+    if (OB_FAIL(ret)) {
     } else if (OB_FAIL(append_state(state, path_state_id))) {
     } else {
       ++root_state_count_;
@@ -162,9 +197,10 @@ int GraphPathStateStore::retain_payload(const GraphEdgePayload &source,
 }
 
 int GraphPathStateStore::add_child(const GraphExpandOutput &extension,
-                                   int64_t &path_state_id, bool retain_history)
+                                   int64_t &path_state_id)
 {
   int ret = OB_SUCCESS;
+  const bool retain_history = retention_ == Retention::HISTORY;
   GraphPathState parent;
   GraphPathState child;
   path_state_id = GRAPH_INVALID_PATH_STATE_ID;
@@ -192,8 +228,12 @@ int GraphPathStateStore::add_child(const GraphExpandOutput &extension,
     child.root_path_state_id_ = parent.root_path_state_id_;
     child.parent_path_state_id_ = retain_history ? parent.path_state_id_ : GRAPH_INVALID_PATH_STATE_ID;
     child.hop_ = parent.hop_ + 1;
-    if (OB_FAIL(deep_copy_identity(extension.target_identity_,
-                                   child.current_identity_))) {
+    if (retention_ == Retention::INDEXED_ENDPOINTS) {
+      child.current_identity_ = extension.target_identity_;
+    } else {
+      ret = deep_copy_identity(extension.target_identity_, child.current_identity_);
+    }
+    if (OB_FAIL(ret)) {
     } else if (retain_history && OB_FAIL(deep_copy_identity(extension.edge_identity_,
                                           child.incoming_edge_identity_))) {
     } else if (retain_history && OB_FAIL(retain_payload(
@@ -208,16 +248,17 @@ int GraphPathStateStore::add_child(const GraphExpandOutput &extension,
 }
 
 int GraphPathStateStore::compact_endpoint_frontier(
-    ObIArray<int64_t> &frontier_state_ids)
+    GraphFrontierStateIds &frontier_state_ids)
 {
   int ret = OB_SUCCESS;
-  const int64_t state_count = states_.count();
+  const int64_t state_count = count();
   int64_t previous_id = root_state_count_ - 1;
   int64_t frontier_hop = -1;
   // Validate before changing either array. In particular all roots must be a
   // prefix: adding a new seed after a child is legal for the general store,
   // but that layout cannot be compacted by this endpoint-only fast path.
-  if (OB_UNLIKELY(root_state_count_ <= 0 || root_state_count_ > state_count
+  if (OB_UNLIKELY(retention_ == Retention::HISTORY
+                  || root_state_count_ <= 0 || root_state_count_ > state_count
                   || frontier_state_ids.count() > state_count - root_state_count_)) {
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("invalid graph endpoint frontier for compaction", K(ret),
@@ -225,8 +266,9 @@ int GraphPathStateStore::compact_endpoint_frontier(
              "frontier_count", frontier_state_ids.count());
   }
   for (int64_t i = 0; OB_SUCC(ret) && i < root_state_count_; ++i) {
-    const GraphPathState &root = states_.at(i);
-    if (OB_UNLIKELY(!root.is_valid() || root.hop_ != 0
+    GraphPathState root;
+    if (OB_FAIL(get_state(i, root))) {
+    } else if (OB_UNLIKELY(!root.is_valid() || root.hop_ != 0
                     || root.path_state_id_ != i || root.root_path_state_id_ != i)) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("graph endpoint root prefix is inconsistent", K(ret), K(i), K(root));
@@ -239,8 +281,9 @@ int GraphPathStateStore::compact_endpoint_frontier(
       LOG_WARN("graph endpoint frontier IDs are not increasing", K(ret), K(i),
                K(old_id), K(previous_id), K(state_count));
     } else {
-      const GraphPathState &state = states_.at(old_id);
-      if (OB_UNLIKELY(!state.is_valid() || state.path_state_id_ != old_id
+      GraphPathState state;
+      if (OB_FAIL(get_state(old_id, state))) {
+      } else if (OB_UNLIKELY(!state.is_valid() || state.path_state_id_ != old_id
                       || state.retains_history_ || state.hop_ == 0
                       || (frontier_hop >= 0 && state.hop_ != frontier_hop)
                       || state.root_path_state_id_ < 0
@@ -257,15 +300,21 @@ int GraphPathStateStore::compact_endpoint_frontier(
     const int64_t old_id = frontier_state_ids.at(i);
     const int64_t compact_id = root_state_count_ + i;
     if (old_id != compact_id) {
-      GraphPathState state = states_.at(old_id);
-      state.path_state_id_ = compact_id;
-      states_.at(compact_id) = state;
+      if (retention_ == Retention::INDEXED_ENDPOINTS) {
+        indexed_endpoints_.at(compact_id) = indexed_endpoints_.at(old_id);
+      } else {
+        endpoints_.at(compact_id) = endpoints_.at(old_id);
+      }
       frontier_state_ids.at(i) = compact_id;
     }
   }
   if (OB_SUCC(ret)) {
     const int64_t live_count = root_state_count_ + frontier_state_ids.count();
-    while (states_.count() > live_count) { states_.pop_back(); }
+    if (retention_ == Retention::INDEXED_ENDPOINTS) {
+      while (indexed_endpoints_.count() > live_count) { indexed_endpoints_.pop_back(); }
+    } else {
+      while (endpoints_.count() > live_count) { endpoints_.pop_back(); }
+    }
   }
   return ret;
 }
@@ -274,18 +323,34 @@ int GraphPathStateStore::get_state(int64_t path_state_id,
                                    GraphPathState &state) const
 {
   int ret = OB_SUCCESS;
+  state = GraphPathState();
   if (OB_UNLIKELY(!is_valid_state_id(path_state_id))) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("invalid graph path state id", K(ret), K(path_state_id),
-             "state_count", states_.count());
-  } else if (OB_UNLIKELY(!states_.at(path_state_id).is_valid()
-                         || states_.at(path_state_id).path_state_id_
-                                != path_state_id)) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("corrupted graph path state", K(ret), K(path_state_id),
-             "state", states_.at(path_state_id));
+             "state_count", count());
+  } else if (retention_ == Retention::INDEXED_ENDPOINTS) {
+    const IndexedEndpointState &endpoint = indexed_endpoints_.at(path_state_id);
+    state.path_state_id_ = path_state_id;
+    state.root_path_state_id_ = endpoint.root_path_state_id_;
+    state.hop_ = endpoint.hop_;
+    state.retains_history_ = false;
+    ret = endpoint_index_.get_identity(endpoint.identity_handle_,
+                                        state.current_identity_, state.binding_id_);
+  } else if (retention_ == Retention::ENDPOINTS) {
+    const EndpointState &endpoint = endpoints_.at(path_state_id);
+    state.binding_id_ = endpoint.binding_id_;
+    state.path_state_id_ = path_state_id;
+    state.root_path_state_id_ = endpoint.root_path_state_id_;
+    state.hop_ = endpoint.hop_;
+    state.retains_history_ = false;
+    state.current_identity_ = endpoint.current_identity_;
   } else {
     state = states_.at(path_state_id);
+  }
+  if (OB_SUCC(ret) && OB_UNLIKELY(!state.is_valid()
+                                 || state.path_state_id_ != path_state_id)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("corrupted graph path state", K(ret), K(path_state_id), K(state));
   }
   return ret;
 }
@@ -301,6 +366,18 @@ int GraphPathStateStore::make_expand_input(int64_t path_state_id,
     input.binding_id_ = state.binding_id_;
     input.path_state_id_ = state.path_state_id_;
     input.source_identity_ = state.current_identity_;
+  }
+  return ret;
+}
+
+int GraphPathStateStore::mark_endpoint_seen(int64_t path_state_id)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(retention_ != Retention::INDEXED_ENDPOINTS
+                  || !is_valid_state_id(path_state_id))) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    ret = endpoint_index_.mark_present(indexed_endpoints_.at(path_state_id).identity_handle_);
   }
   return ret;
 }
@@ -453,6 +530,10 @@ int GraphPathStateStore::fail(int error)
 void GraphPathStateStore::reset()
 {
   states_.reset();
+  endpoints_.reset();
+  indexed_endpoints_.reset();
+  endpoint_index_.reset();
+  retention_ = Retention::HISTORY;
   identity_allocator_.reset();
   root_state_count_ = 0;
   peak_memory_bytes_ = 0;

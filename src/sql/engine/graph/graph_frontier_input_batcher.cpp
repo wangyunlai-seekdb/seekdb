@@ -71,7 +71,7 @@ int GraphFrontierInputBatcher::check_memory_limit(int64_t memory_budget) const
 }
 
 int GraphFrontierInputBatcher::begin_level(
-    const ObIArray<int64_t> &states, int64_t hop, int64_t memory_budget,
+    const GraphFrontierStateIds &states, int64_t hop, int64_t memory_budget,
     bool sources_unique_by_shortest)
 {
   int ret = OB_SUCCESS;
