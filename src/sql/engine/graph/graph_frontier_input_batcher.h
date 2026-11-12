@@ -36,7 +36,7 @@ public:
   // memory_budget excludes all other frontier/access allocations. Those stay
   // unchanged during each call; the owner recomputes the budget between calls.
   // The state IDs and their identities must outlive this level's access cursor.
-  int begin_level(const common::ObIArray<int64_t> &states, int64_t hop,
+  int begin_level(const GraphFrontierStateIds &states, int64_t hop,
                   int64_t memory_budget, bool sources_unique_by_shortest);
   int next_batch(int64_t memory_budget);
   bool exhausted() const { return state_ids_ == nullptr || next_position_ == input_units(); }
@@ -71,7 +71,7 @@ private:
   common::ObArray<SourceGroup> source_groups_;
   common::ObArray<int64_t> next_source_positions_;
   common::ObArray<GraphExpandInput> input_batch_;
-  const common::ObIArray<int64_t> *state_ids_{nullptr};
+  const GraphFrontierStateIds *state_ids_{nullptr};
   int64_t batch_size_{0};
   int64_t hop_{0};
   int64_t next_position_{0};

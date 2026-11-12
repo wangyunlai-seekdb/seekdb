@@ -42,14 +42,34 @@ seed	endpoint	hops
 3.75	1.25	2
 3.75	2.50	3
 3.75	3.75	2
+shared_endpoint_handles_keep_composite_keys_and_bindings
+binding	endpoint	hops
+1	1.25	0
+1	2.50	1
+1	3.75	2
+2	1.25	0
+2	2.50	1
+2	3.75	2
 compact_endpoints_segment_growth_and_late_duplicate_sources
 endpoints	min_hops	max_hops
 16393	0	2
+endpoints	min_hops	max_hops
+16393	1	3
+endpoints	min_hops	max_hops
+0	NULL	NULL
+endpoints	min_hops	max_hops
+16393	1	3
 hops	paths
 2	8200
 3	8200
 endpoints	min_hops	max_hops
 16393	0	2
+endpoints	min_hops	max_hops
+16393	1	3
+endpoints	min_hops	max_hops
+0	NULL	NULL
+endpoints	min_hops	max_hops
+16393	1	3
 hops	paths
 2	8200
 3	8200

@@ -145,7 +145,16 @@ public:
       const bool retain_path_history = spec.get_path_mode() != GraphPathMode::WALK
           || spec.get_path_desc().row_shape_ != GraphPathRowShape::PER_MATCH
           || row.payload_expr_count_ != 0 || row.trail_key_expr_count_ != 0;
-      frontier_.set_retain_path_history(retain_path_history);
+      // Share descriptors only when visited survives the first output level.
+      // Larger positive lower bounds reset membership between early levels;
+      // retaining all their inactive identities could increase memory use.
+      const bool indexed_endpoints = !retain_path_history && spec.prune_duplicate_states()
+          && spec.get_path_desc().any_shortest_
+          && spec.get_path_desc().shortest_single_segment_ && spec.get_lower_bound() <= 1;
+      frontier_.set_state_retention(retain_path_history
+          ? GraphPathStateStore::Retention::HISTORY
+          : indexed_endpoints ? GraphPathStateStore::Retention::INDEXED_ENDPOINTS
+                              : GraphPathStateStore::Retention::ENDPOINTS);
       expand_.set_edge_projection(
           retain_path_history, row.payload_expr_count_ != 0);
       const bool ordinary_select = plan_ctx != nullptr && plan_ctx->get_phy_plan() != nullptr
