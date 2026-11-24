@@ -1,41 +1,15 @@
-name: Package seekdb
-run-name: Package ${{ inputs.platform }} / ${{ inputs.linux_glibc }} / ${{ inputs.binary_run_id && format('binary run {0}', inputs.binary_run_id) || inputs.version || 'source version' }}
-
+name: Check iOS packaging from PR 2736
 on:
-  workflow_dispatch:
-    inputs:
-      platform:
-        description: Platforms to build
-        type: choice
-        default: linux-x86_64
-        options: [all, linux-x86_64, linux-aarch64, macos-arm64, windows-x86_64, android-arm64, ios, ios-arm64, ios-simulator-arm64]
-      linux_glibc:
-        description: Linux compatibility baseline
-        type: choice
-        default: '2.17'
-        options: ['2.17', '2.28', both]
-      version:
-        description: Package version (empty uses the source or reused binary version)
-        type: string
-      formats:
-        description: Linux system packages (all choices also export the binary archive)
-        type: choice
-        default: all
-        options: [all, binary, rpm, deb]
-      binary_run_id:
-        description: Existing run ID to reuse Linux binaries for RPM/DEB (empty builds binaries)
-        type: string
-      jobs:
-        description: Local build parallelism (0 selects hosted-runner defaults)
-        type: number
-        default: 0
+  push:
+    branches:
+      - codex/verify-ios-packaging-2736-e6b98b6
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: package-${{ github.ref }}-${{ inputs.platform }}-${{ inputs.linux_glibc }}-${{ inputs.binary_run_id || 'build' }}
+  group: package-${{ github.ref }}-${{ 'ios' }}-${{ '2.17' }}-${{ '' || 'build' }}
   cancel-in-progress: false
 
 env:
@@ -62,11 +36,11 @@ jobs:
       - name: Select and validate targets
         id: matrix
         env:
-          PACKAGE_PLATFORM: ${{ inputs.platform }}
-          PACKAGE_GLIBC: ${{ inputs.linux_glibc }}
-          PACKAGE_VERSION: ${{ inputs.version }}
-          PACKAGE_FORMATS: ${{ inputs.formats }}
-          PACKAGE_BINARY_RUN_ID: ${{ inputs.binary_run_id }}
+          PACKAGE_PLATFORM: ${{ 'ios' }}
+          PACKAGE_GLIBC: ${{ '2.17' }}
+          PACKAGE_VERSION: ${{ '' }}
+          PACKAGE_FORMATS: ${{ 'binary' }}
+          PACKAGE_BINARY_RUN_ID: ${{ '' }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/package.py matrix
 
@@ -90,7 +64,7 @@ jobs:
       PACKAGE_APPLE_SDK: ${{ matrix.sdk }}
       PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
       PACKAGE_RELEASE: ${{ needs.prepare.outputs.release }}
-      BUILD_JOBS: ${{ inputs.jobs }}
+      BUILD_JOBS: ${{ '0' }}
       SEEKDB_DEPS_GITHUB_PROXY_PREFIX: ''
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -260,7 +234,7 @@ jobs:
   system-packages:
     name: package-${{ matrix.id }}
     needs: [prepare, binary]
-    if: always() && !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.has_linux == 'true' && inputs.formats != 'binary'
+    if: always() && !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.has_linux == 'true' && 'binary' != 'binary'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
