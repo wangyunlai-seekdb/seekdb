@@ -87,8 +87,8 @@ void exercise() {
 #ifdef __EMSCRIPTEN__
   int expected = 0;
 #else
-  int expected = (ALL_STACK_LIMIT - initial.size) / STACK_PER_EXTEND;
-  verify(expected >= 2, "worker starts with room for nested extensions");
+  const size_t limit = ALL_STACK_LIMIT;
+  int expected = initial.size < limit ? (limit - initial.size) / STACK_PER_EXTEND : 0;
 #endif
   verify(result == OB_SIZE_OVERFLOW && state.switches == expected && state.restores == expected,
       "nested calls restore their old stacks and stop at the configured limit");
@@ -104,8 +104,8 @@ DWORD WINAPI worker(LPVOID) { exercise(); return 0; }
 void *worker(void *) { exercise(); return nullptr; }
 #endif
 
-int main() {
-  constexpr size_t worker_stack_size = 512 * 1024;
+int main(int argc, char **argv) {
+  const size_t worker_stack_size = argc > 1 ? std::strtoull(argv[1], nullptr, 10) : 512 * 1024;
 #ifdef _WIN32
   HANDLE thread = CreateThread(nullptr, worker_stack_size, worker, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
   verify(thread && WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0, "create and join Windows worker");

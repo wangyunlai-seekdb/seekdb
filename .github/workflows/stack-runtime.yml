@@ -65,6 +65,9 @@ jobs:
           clang++ --version
           bash compile.sh probe clang++ -pthread
           ./probe
+          ./probe 2097152
+          ./probe 8388608
+          ./probe 16777216
       - name: Run the Win64 probe using Clang and MSVC
         if: matrix.mode == 'windows'
         shell: cmd
