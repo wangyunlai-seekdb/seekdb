@@ -1,0 +1,132 @@
+name: SeekDB stack runtime probe
+on:
+  push:
+    branches: [codex/seekdb-stack-runtime-20261126]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  SOURCE_SHA: 199d21a26a1ce18bc35acd1bad0eb1e2e7ef2bc3
+  ANDROID_NDK_VERSION: 27.3.13750724
+jobs:
+  run:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            os: ubuntu-24.04
+            mode: native
+          - platform: Linux arm64
+            os: ubuntu-24.04-arm
+            mode: native
+          - platform: macOS arm64
+            os: macos-15
+            mode: native
+          - platform: Windows x64
+            os: windows-2025
+            mode: windows
+          - platform: iOS arm64 simulator
+            os: macos-15
+            mode: ios
+          - platform: Android ARM64 Bionic via QEMU
+            os: ubuntu-24.04
+            mode: bionic
+          - platform: Android x64 emulator
+            os: ubuntu-24.04
+            mode: android
+          - platform: Browser WASM
+            os: ubuntu-24.04
+            mode: wasm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare exact SeekDB source
+        run: |
+          git init -q -b main source
+          git -C source remote add origin https://github.com/oceanbase/seekdb.git
+          git -C source config remote.origin.promisor true
+          git -C source config remote.origin.partialclonefilter blob:none
+          git -C source fetch -q --no-tags --depth=1 --filter=blob:none origin "$SOURCE_SHA"
+          git -C source update-ref refs/heads/main FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          python prepare.py source generated
+      - name: Run native worker probe
+        if: matrix.mode == 'native'
+        run: |
+          uname -a
+          clang++ --version
+          bash compile.sh probe clang++ -pthread
+          ./probe
+      - name: Run the Win64 probe using Clang and MSVC
+        if: matrix.mode == 'windows'
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          clang-cl --version || exit /b 1
+          clang-cl /nologo /O2 /EHsc /std:c++17 /clang:-fno-omit-frame-pointer /I. /Igenerated generated\bounds.cpp generated\jump.cpp generated\allocator.cpp probe.cpp touch.cpp /Fe:probe.exe || exit /b 1
+          probe.exe
+      - name: Run iOS Simulator worker probe
+        if: matrix.mode == 'ios'
+        run: |
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          bash compile.sh probe-ios "$(xcrun --sdk iphonesimulator --find clang++)" -target arm64-apple-ios18.0-simulator -isysroot "$sdk"
+          codesign --force --sign - probe-ios
+          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for r,xs in sorted(d.items(), reverse=True) if ".iOS-" in r for x in xs if "iPhone" in x["name"]))')
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl spawn "$device" "$PWD/probe-ios" | tee simulator.txt
+          grep '^PASS ' simulator.txt
+      - name: Locate Android NDK
+        if: matrix.mode == 'bionic' || matrix.mode == 'android'
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          ndk="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          if ! test -d "$ndk"; then "$sdkmanager" --install "ndk;$ANDROID_NDK_VERSION"; fi
+          printf 'NDK_LLVM=%s\n' "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_ENV"
+      - name: Run Android ARM64 Bionic binary under QEMU
+        if: matrix.mode == 'bionic'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user
+          bash compile.sh probe-bionic "$NDK_LLVM/aarch64-linux-android26-clang++" -static -pthread
+          file probe-bionic
+          qemu-aarch64 ./probe-bionic
+      - name: Run Android emulator worker probe
+        if: matrix.mode == 'android'
+        run: |
+          sudo setfacl -m u:"$USER":rw /dev/kvm
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          image='system-images;android-35;google_apis;x86_64'
+          "$tools/sdkmanager" --install "$image"
+          printf 'no\n' | "$tools/avdmanager" create avd -f -n seekdb-probe -k "$image"
+          "$ANDROID_HOME/emulator/emulator" -avd seekdb-probe -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          adb="$ANDROID_HOME/platform-tools/adb"
+          timeout 180 "$adb" wait-for-device
+          timeout 200 bash -c 'until [ "$("$1" shell getprop sys.boot_completed | tr -d "\r")" = 1 ]; do sleep 3; done' _ "$adb"
+          "$adb" shell getprop ro.product.cpu.abi
+          bash compile.sh probe-android "$NDK_LLVM/x86_64-linux-android26-clang++" -pthread -static-libstdc++
+          "$adb" push probe-android /data/local/tmp/seekdb-stack-probe
+          "$adb" shell chmod +x /data/local/tmp/seekdb-stack-probe
+          "$adb" shell /data/local/tmp/seekdb-stack-probe
+      - name: Run browser WASM worker probe
+        if: matrix.mode == 'wasm'
+        run: |
+          version=$(git -C source show HEAD:deps/init/wasm/emscripten-version)
+          git clone -q --depth=1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$version"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$version"
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          bash compile.sh test.mjs em++ -pthread -fexceptions -sEXIT_RUNTIME=1 -sASSERTIONS=2 -sPROXY_TO_PTHREAD=1 -sPTHREAD_POOL_SIZE=2 -sDEFAULT_PTHREAD_STACK_SIZE=1048576 -sSTACK_SIZE=2097152 -sALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6=1
+          npm install --no-save --no-package-lock playwright@1.51.1
+          python3 browser.py 8128 > "$RUNNER_TEMP/browser-server.log" 2>&1 &
+          export CHROME_BIN=$(command -v google-chrome)
+          node browser.mjs

@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SeekDB stack probe</title>
+<pre id="result"></pre>
+<script type="module">
+import createProbe from './test.mjs';
+const log = (line) => document.getElementById('result').append(`${line}\n`);
+try {
+  if (!crossOriginIsolated) throw new Error('Browser is not cross-origin isolated');
+  await createProbe({
+    print: log,
+    printErr: log,
+    onAbort: (reason) => log(`ABORT ${reason}`),
+    onExit: (code) => log(`EXIT ${code}`),
+  });
+} catch (error) {
+  log(`ERROR ${error.stack}`);
+}
+</script>
