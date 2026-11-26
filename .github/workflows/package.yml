@@ -1,7 +1,5 @@
 name: SeekDB stack runtime probe
 on:
-  push:
-    branches: [codex/seekdb-stack-runtime-20261126]
   workflow_dispatch:
 permissions:
   contents: read
